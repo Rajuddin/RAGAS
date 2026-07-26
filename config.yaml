@@ -1,0 +1,44 @@
+llm_provider: azure
+openai:
+  api_key: 
+  model: gpt-4o
+azure:
+  api_key: 
+  azure_endpoint: https://rajuddin-resource.services.ai.azure.com/openai/v1
+  deployment_name: gpt-5.4
+  api_version: preview
+  embedding_model_name: ''
+foundry:
+  api_key: your-foundry-key
+  endpoint: https://your-resource.services.ai.azure.com/models
+  model_name: your-chat-model
+  embedding_model_name: your-embedding-model
+  api_version: 2024-05-01-preview
+rag_api:
+  endpoint: https://airagasapi-eval-e2bfhwhgfbh2hbc9.centralindia-01.azurewebsites.net/ask
+  timeout: 60
+  headers:
+    Content-Type: application/json
+  answer_field: message.generated_response
+  contexts_field: message.context[0].context
+  context_item_field: content
+  payload_params:
+  - name: Query
+    source: field
+    field: query
+    value: ''
+  - name: Type
+    source: static
+    field: ''
+    value: text
+ragas:
+  metrics:
+  - response_relevancy
+  - faithfulness
+  - context_precision
+  - context_recall
+  batch_size: 5
+  raise_exceptions: false
+allure:
+  results_dir: ./allure-results
+  report_title: RAGAS Evaluation Report

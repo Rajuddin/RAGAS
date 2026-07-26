@@ -1,0 +1,49 @@
+llm_provider: openai
+openai:
+  api_key: "sk-your-openai-key"
+  model: gpt-4o
+azure:
+  api_key: "your-azure-openai-key"
+  azure_endpoint: "https://your-resource.openai.azure.com"
+  deployment_name: "your-chat-deployment"
+  api_version: "2024-02-01"
+  embedding_model_name: "your-embedding-deployment"
+foundry:
+  api_key: "your-foundry-key"
+  endpoint: "https://your-resource.services.ai.azure.com/models"
+  model_name: "your-chat-model"
+  embedding_model_name: "your-embedding-model"
+  api_version: "2024-05-01-preview"
+rag_api:
+  endpoint: "https://your-rag-api/ask"
+  timeout: 30
+  headers:
+    Content-Type: application/json
+  # Defines the JSON request body sent to the RAG API (also editable from the
+  # "Request Payload" section of the RAG API Configuration panel in the UI).
+  # - source: field  -> value is pulled from that key in each test case's JSON
+  #                      object (falls back to "" if missing for that case).
+  # - source: static -> value is the same hardcoded value for every test case
+  #                      (parsed as JSON when possible, e.g. "123" -> 123,
+  #                      "true" -> true, otherwise kept as a plain string).
+  payload_params:
+  - name: question
+    source: field
+    field: query
+  - name: chat_history
+    source: static
+    value: "[]"
+  - name: Type
+    source: static
+    value: text
+ragas:
+  metrics:
+  - response_relevancy
+  - faithfulness
+  - context_precision
+  - context_recall
+  batch_size: 5
+  raise_exceptions: false
+allure:
+  results_dir: ./allure-results
+  report_title: RAGAS Evaluation Report

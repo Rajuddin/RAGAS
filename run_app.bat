@@ -1,0 +1,55 @@
+@echo off
+REM ─────────────────────────────────────────────────────────────────────────────
+REM run_app.bat
+REM One-shot launcher for the Streamlit UI. Creates the virtual environment and
+REM installs all dependencies automatically on first run, then starts the app.
+REM ─────────────────────────────────────────────────────────────────────────────
+
+cd /d "%~dp0"
+
+echo.
+echo ══════════════════════════════════════════════
+echo   RAGAS Evaluation — Streamlit UI
+echo ══════════════════════════════════════════════
+echo.
+
+REM Check Python
+python --version >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: Python not found. Please install Python 3.9+.
+    pause
+    exit /b 1
+)
+python --version
+
+REM Virtual environment
+if not exist ".venv" (
+    echo.
+    echo Creating virtual environment...
+    python -m venv .venv
+)
+call .venv\Scripts\activate.bat
+
+REM Install dependencies
+echo.
+echo Installing dependencies...
+python -m pip install --quiet --upgrade pip
+python -m pip install --quiet -r requirements.txt
+
+REM Config check
+if not exist "config.yaml" (
+    echo.
+    echo No config.yaml found — creating one from config.example.yaml.
+    echo Fill in your LLM/API keys ^(use the sidebar in the app, or edit the file directly^).
+    copy config.example.yaml config.yaml >nul
+)
+
+REM Launch
+REM The Allure CLI ^(used by the in-app "Open Allure Report" button^) is downloaded
+REM automatically into .tools\ the first time the button is clicked — no separate
+REM install step needed here, only a Java runtime on the machine.
+echo.
+echo Starting Streamlit app...
+echo.
+streamlit run app.py
+pause

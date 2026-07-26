@@ -1,0 +1,7 @@
+[
+  {
+    "test_id": "TC001",
+    "query": "What is the exact salary range for a Senior Mechanical Engineer at Google in London?",
+    "ground_truth": "The salary range for a Senior Mechanical Engineer at Google in London is approximately **£100,000 to £142,500**, with an average of **£121,200**. To negotiate effectively, focus on highlighting your specialized skills, certifications, and any experience with cutting-edge technologies. Additionally, consider asking about equity, bonuses, or other benefits to maximize your total compensation.Would you like tips on how to approach the negotiation or explore benefits Google typically offers?"
+  }
+]

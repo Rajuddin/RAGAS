@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install -r requirements.txt 2>&1)",
+      "PowerShell(python --version)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install --upgrade pip 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import langchain_community.chat_models.vertexai\" 2>&1; Write-Host \"---exit:$LASTEXITCODE---\"; .venv\\\\Scripts\\\\python.exe -c \"import ragas; print\\(ragas.__version__\\)\" 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip index versions langchain-community 2>&1)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip index versions ragas 2>&1)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m pip install \"langchain-community<0.4.0\")",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -c \"import ragas; print\\('ragas OK', ragas.__version__\\)\")",
+      "PowerShell(Get-Process -Name streamlit -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue)",
+      "PowerShell(.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\rajuddin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-rajuddin-Desktop-AITesting-AITesting-RAGASAgent\\\\49fbd5a3-5424-494c-8871-b3fcc52e3154\\\\scratchpad\\\\verify_payload.py\")",
+      "PowerShell(winget --version 2>&1)",
+      "PowerShell(winget install --id EclipseAdoptium.Temurin.21.JRE -e --accept-package-agreements --accept-source-agreements)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\rajuddin\\Desktop\\AITesting\\AITesting\\RAGASAgent\\.venv"
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+[
+  {
+    "test_id": "TC001",
+    "query": "What is the capital of France and what is it known for?",
+    "ground_truth": "Paris is the capital of France. It is known worldwide for its art, fashion, gastronomy, and culture. Iconic landmarks include the Eiffel Tower, the Louvre museum, and Notre-Dame Cathedral.",
+    "generated_answer": "The capital of France is Paris. Paris is famous for its art, fashion, and culture. The Eiffel Tower and the Louvre are among its most famous landmarks.",
+    "contexts": [
+      "Paris is the capital and most populous city of France. Situated on the Seine River, it has been a major European city for centuries. Paris is renowned worldwide for its art, culture, fashion, and cuisine.",
+      "The Eiffel Tower, located on the Champ de Mars in Paris, was built in 1889 as the entrance arch for the 1889 World's Fair. It stands 330 metres tall and is one of the most visited monuments in the world.",
+      "The Louvre Museum in Paris is the world's largest art museum and a historic monument. It houses approximately 38,000 objects from prehistory to the 21st century, including the Mona Lisa and the Venus de Milo."
+    ]
+  },
+  {
+    "test_id": "TC002",
+    "query": "How does the human immune system fight viruses?",
+    "ground_truth": "The human immune system fights viruses through two main mechanisms: the innate immune response, which provides immediate but non-specific defence, and the adaptive immune response, which produces antibodies and T-cells specifically targeted at the invading virus. Memory cells are retained after infection to enable faster response in the future.",
+    "generated_answer": "The immune system fights viruses using the innate immune response for immediate defence and the adaptive immune response, which creates specific antibodies and T-cells to neutralise the virus. After recovery, memory B and T cells remain in the body to respond more quickly if the same virus is encountered again.",
+    "contexts": [
+      "The innate immune system is the first line of defence against pathogens. It acts within minutes to hours of an infection and includes physical barriers like skin, as well as immune cells such as natural killer cells and macrophages that attack any foreign invader non-specifically.",
+      "The adaptive immune system provides a targeted response to specific pathogens. B cells produce antibodies that bind to antigens on the surface of viruses, neutralising them. T cells, particularly cytotoxic T cells, destroy cells that have already been infected by a virus.",
+      "Memory cells are a crucial outcome of the adaptive immune response. After an infection is cleared, memory B cells and memory T cells persist in the body for years. Upon re-exposure to the same pathogen, these memory cells enable a much faster and stronger immune response, often preventing illness altogether."
+    ]
+  },
+  {
+    "test_id": "TC003",
+    "query": "What is machine learning and how does it differ from traditional programming?",
+    "ground_truth": "Machine learning is a branch of artificial intelligence in which systems learn from data to make predictions or decisions without being explicitly programmed. Unlike traditional programming, where a human writes explicit rules, in machine learning the algorithm discovers patterns in training data and builds its own rules automatically.",
+    "generated_answer": "Machine learning is a subset of AI that enables systems to learn from data and improve performance over time without being explicitly programmed. Traditional programming requires developers to write rules manually, whereas machine learning algorithms automatically identify patterns in data to make decisions.",
+    "contexts": [
+      "Machine learning (ML) is a field of inquiry devoted to understanding and building methods that 'learn' — that is, methods that leverage data to improve performance on some set of tasks. It is seen as a part of artificial intelligence.",
+      "In traditional programming, a developer writes explicit rules in code that the computer then follows to produce an output from given inputs. This approach requires the programmer to anticipate every possible scenario and encode the appropriate logic.",
+      "In machine learning, instead of writing rules, the developer provides a large dataset of examples and the algorithm finds patterns in that data. The model that results can then make predictions or take decisions on new, unseen data without additional human-written rules."
+    ]
+  },
+  {
+    "test_id": "TC004",
+    "query": "What caused the 2008 global financial crisis?",
+    "ground_truth": "The 2008 global financial crisis was primarily caused by the collapse of the US housing bubble, fuelled by excessive mortgage lending to high-risk borrowers (subprime mortgages), the bundling and resale of these risky loans as complex financial products (mortgage-backed securities), and a lack of regulatory oversight. When housing prices fell and defaults rose, the value of these securities collapsed, triggering a broader financial panic.",
+    "generated_answer": "The 2008 financial crisis was triggered by the collapse of the US housing market, driven by widespread subprime mortgage lending and the securitisation of these risky loans into complex instruments like CDOs. When housing prices dropped sharply and mortgage defaults surged, major financial institutions that held these securities suffered catastrophic losses, leading to a global credit freeze.",
+    "contexts": [
+      "The subprime mortgage crisis was a catalyst for the 2008 global financial crisis. In the years leading up to 2008, US banks issued large volumes of mortgages to borrowers with poor credit histories ('subprime' borrowers) at initially low teaser rates. When interest rates reset higher, many borrowers defaulted.",
+      "Mortgage-backed securities (MBS) and collateralised debt obligations (CDOs) packaged thousands of individual mortgages together and sold them to investors worldwide. Credit rating agencies assigned these products high safety ratings despite the underlying risk. When the US housing market declined, the value of these instruments collapsed rapidly.",
+      "The financial panic of 2008 spread globally as banks stopped lending to each other due to uncertainty about which institutions held toxic assets. Major banks and investment firms required government bailouts to avoid bankruptcy. The resulting credit freeze led to a severe global recession affecting employment and economic output worldwide."
+    ]
+  },
+  {
+    "test_id": "TC005",
+    "query": "How does a Retrieval-Augmented Generation (RAG) system work?",
+    "ground_truth": "A RAG system combines a retrieval component with a generative language model. When a user poses a question, the system first retrieves relevant documents or passages from a knowledge base (typically a vector database). These retrieved passages are then provided as additional context to the language model, which generates an answer grounded in that context rather than relying solely on its pre-trained knowledge.",
+    "generated_answer": "A RAG system works by first using a retrieval mechanism to search a vector database for documents relevant to the user's query. The retrieved documents are then passed as context to a large language model, which uses both its pre-trained knowledge and the retrieved context to generate a more accurate and up-to-date answer.",
+    "contexts": [
+      "Retrieval-Augmented Generation (RAG) is a technique that enhances large language models by grounding their responses in external knowledge retrieved at inference time. Rather than relying solely on knowledge encoded during training, a RAG system retrieves relevant documents from an external corpus and provides them to the model as additional context.",
+      "Vector databases play a central role in RAG systems. Text documents are converted into dense numerical representations called embeddings and stored in a vector database. At query time, the user's question is also converted into an embedding, and the database performs a similarity search to retrieve the most relevant document chunks.",
+      "The generative component of a RAG system takes the retrieved context passages and the original user query and produces a natural language response. This approach reduces hallucination — where a model generates plausible-sounding but incorrect information — because the model can reference real retrieved text rather than relying entirely on memorised knowledge."
+    ]
+  },
+  {
+    "test_id": "TC006",
+    "query": "What are the main differences between SQL and NoSQL databases?",
+    "ground_truth": "SQL databases are relational, use structured tables with predefined schemas, and support ACID transactions. NoSQL databases are non-relational, support flexible or schema-less data models (documents, key-value pairs, graphs, or column families), and are typically optimised for horizontal scalability and high-throughput workloads. SQL is preferred for complex queries and transactional consistency; NoSQL suits large-scale, unstructured, or rapidly evolving data.",
+    "generated_answer": "SQL databases use a relational table-based structure with a fixed schema and support ACID transactions, making them well suited for complex queries. NoSQL databases offer flexible schemas and come in multiple forms such as document stores, key-value stores, and graph databases. They are designed for horizontal scalability and are preferred when dealing with large volumes of unstructured or semi-structured data.",
+    "contexts": [
+      "SQL (Structured Query Language) databases, also called relational databases, organise data into tables with rows and columns. They enforce a strict schema and use SQL for querying. Examples include PostgreSQL, MySQL, and Microsoft SQL Server. They support ACID (Atomicity, Consistency, Isolation, Durability) transactions, ensuring data integrity.",
+      "NoSQL databases are non-relational databases designed to store and retrieve data in formats other than the tabular model used by relational databases. Types include document stores (e.g. MongoDB), key-value stores (e.g. Redis), wide-column stores (e.g. Cassandra), and graph databases (e.g. Neo4j). They typically sacrifice strict ACID compliance in favour of flexibility and scalability.",
+      "The choice between SQL and NoSQL depends on the use case. SQL databases are preferred when data is structured, relationships between entities are important, and transactional consistency is critical. NoSQL databases are preferred for large-scale applications with high write throughput, rapidly changing data structures, or data that does not fit neatly into tables, such as social media feeds or IoT sensor data."
+    ]
+  }
+]
+ 
+ 

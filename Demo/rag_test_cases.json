@@ -1,0 +1,57 @@
+[
+  {
+    "test_id": "TC001",
+    "query": "What is a Retrieval-Augmented Generation (RAG) system?",
+    "ground_truth": "A RAG system combines information retrieval with text generation, where relevant documents are retrieved from a knowledge base and used by a language model to generate accurate responses.",
+    "generated_answer": "A RAG system retrieves relevant information from a database and uses a language model to generate answers based on that retrieved context.",
+    "contexts": [
+      "RAG integrates a retriever and a generator to improve response accuracy.",
+      "The retriever fetches relevant documents from external knowledge sources.",
+      "The generator uses retrieved data to produce context-aware responses."
+    ]
+  },
+  {
+    "test_id": "TC002",
+    "query": "What is context precision in RAG evaluation?",
+    "ground_truth": "Context precision measures how much of the retrieved context is relevant to the query, indicating the quality of retrieved information.",
+    "generated_answer": "Context precision measures the proportion of relevant information in the retrieved context compared to irrelevant information.",
+    "contexts": [
+      "Context precision evaluates relevance of retrieved documents.",
+      "Higher precision means fewer irrelevant chunks are retrieved.",
+      "It is an important metric in RAG evaluation frameworks like RAGAS."
+    ]
+  },
+  {
+    "test_id": "TC003",
+    "query": "What is hallucination in language models?",
+    "ground_truth": "Hallucination occurs when a language model generates information that is not supported by the provided context or is factually incorrect.",
+    "generated_answer": "Hallucination happens when the model generates incorrect or unsupported information not grounded in the retrieved context.",
+    "contexts": [
+      "Hallucinations are common in generative AI systems.",
+      "They occur when models produce plausible but incorrect answers.",
+      "Reducing hallucination is a key goal in RAG systems."
+    ]
+  },
+  {
+    "test_id": "TC004",
+    "query": "What is the role of a retriever in a RAG pipeline?",
+    "ground_truth": "The retriever is responsible for fetching relevant documents or context from a knowledge base based on the input query.",
+    "generated_answer": "The retriever searches a knowledge base and returns relevant documents that help the generator produce an accurate answer.",
+    "contexts": [
+      "Retriever modules use techniques like vector search or BM25.",
+      "They identify relevant text chunks based on semantic similarity.",
+      "Retriever performance directly impacts RAG accuracy."
+    ]
+  },
+  {
+    "test_id": "TC005",
+    "query": "What is answer faithfulness in RAG evaluation?",
+    "ground_truth": "Answer faithfulness measures whether the generated response is supported by the retrieved context without adding unsupported claims.",
+    "generated_answer": "Answer faithfulness checks if the generated answer is fully grounded in the retrieved context and does not introduce new unsupported information.",
+    "contexts": [
+      "Faithfulness ensures alignment between answer and context.",
+      "It helps detect hallucinations in generated responses.",
+      "Evaluation frameworks use LLM-as-judge to assess faithfulness."
+    ]
+  }
+]
