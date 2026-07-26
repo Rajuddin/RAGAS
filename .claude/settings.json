@@ -15,7 +15,9 @@
       "PowerShell(Get-NetTCPConnection -LocalPort 8501 -ErrorAction SilentlyContinue)",
       "PowerShell(.venv\\\\Scripts\\\\python.exe \"C:\\\\Users\\\\rajuddin\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-rajuddin-Desktop-AITesting-AITesting-RAGASAgent\\\\49fbd5a3-5424-494c-8871-b3fcc52e3154\\\\scratchpad\\\\verify_payload.py\")",
       "PowerShell(winget --version 2>&1)",
-      "PowerShell(winget install --id EclipseAdoptium.Temurin.21.JRE -e --accept-package-agreements --accept-source-agreements)"
+      "PowerShell(winget install --id EclipseAdoptium.Temurin.21.JRE -e --accept-package-agreements --accept-source-agreements)",
+      "Bash(git reset *)",
+      "Bash(git commit -m ' *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\rajuddin\\Desktop\\AITesting\\AITesting\\RAGASAgent\\.venv"

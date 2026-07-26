@@ -1,9 +1,9 @@
-llm_provider: azure
+llm_provider: openai
 openai:
-  api_key: 
+  api_key: ''
   model: gpt-4o
 azure:
-  api_key: 
+  api_key: null
   azure_endpoint: https://rajuddin-resource.services.ai.azure.com/openai/v1
   deployment_name: gpt-5.4
   api_version: preview
