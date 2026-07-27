@@ -17,7 +17,13 @@
       "PowerShell(winget --version 2>&1)",
       "PowerShell(winget install --id EclipseAdoptium.Temurin.21.JRE -e --accept-package-agreements --accept-source-agreements)",
       "Bash(git reset *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "Bash(git fetch *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(python -c \"import ragas; print\\(ragas.__version__\\)\")",
+      "Bash(python -c ' *)"
     ],
     "additionalDirectories": [
       "C:\\Users\\rajuddin\\Desktop\\AITesting\\AITesting\\RAGASAgent\\.venv"

@@ -103,13 +103,21 @@ def write_case_result(
     status: str = "passed",
     status_message: Optional[str] = None,
     story: str = "Streamlit Evaluation",
+    start_ms: Optional[int] = None,
+    stop_ms: Optional[int] = None,
 ) -> None:
-    """Write one Allure result (+ JSON attachments) for a single evaluated case."""
+    """Write one Allure result (+ JSON attachments) for a single evaluated case.
+
+    start_ms/stop_ms (epoch milliseconds) let the Allure report show the real time
+    spent evaluating this case. If omitted, both default to "now" (zero duration).
+    """
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
     result_uuid = str(uuid.uuid4())
     now_ms = int(time.time() * 1000)
+    start_ms = now_ms if start_ms is None else start_ms
+    stop_ms = now_ms if stop_ms is None else stop_ms
 
     attachments = []
 
@@ -161,8 +169,8 @@ def write_case_result(
         "fullName": f"Streamlit Evaluation: {test_id}",
         "status": status,
         "stage": "finished",
-        "start": now_ms,
-        "stop": now_ms,
+        "start": start_ms,
+        "stop": stop_ms,
         "parameters": parameters,
         "attachments": attachments,
         "labels": [

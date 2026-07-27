@@ -1,13 +1,13 @@
-llm_provider: openai
+llm_provider: azure
 openai:
-  api_key: ''
+  api_key: 
   model: gpt-4o
 azure:
-  api_key: null
+  api_key: 
   azure_endpoint: https://rajuddin-resource.services.ai.azure.com/openai/v1
   deployment_name: gpt-5.4
   api_version: preview
-  embedding_model_name: ''
+  embedding_model_name: text-embedding-3-small
 foundry:
   api_key: your-foundry-key
   endpoint: https://your-resource.services.ai.azure.com/models
@@ -35,8 +35,6 @@ ragas:
   metrics:
   - response_relevancy
   - faithfulness
-  - context_precision
-  - context_recall
   batch_size: 5
   raise_exceptions: false
 allure:

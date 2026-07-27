@@ -52,6 +52,9 @@ class AppConfig:
     rag_api: RAGApiConfig
     ragas_metrics: list
     allure_results_dir: str
+    # Max number of test cases evaluated concurrently in Batch mode (each on its own
+    # thread, so each still gets an accurate individual start/stop duration).
+    batch_size: int = 5
 
 
 def load_config(config_path: str = None) -> AppConfig:
@@ -107,6 +110,7 @@ def load_config(config_path: str = None) -> AppConfig:
         rag_api=rag_cfg,
         ragas_metrics=raw["ragas"].get("metrics", []),
         allure_results_dir=raw["allure"].get("results_dir", "./allure-results"),
+        batch_size=int(raw.get("ragas", {}).get("batch_size", 5) or 5),
     )
 
 
@@ -211,6 +215,7 @@ def build_langchain_llm(llm_cfg: LLMConfig):
     """
     import warnings
     from ragas.llms import LangchainLLMWrapper
+    from ragas.run_config import RunConfig
 
     if llm_cfg.provider == "azure":
         if _is_foundry_v1_endpoint(llm_cfg.azure_endpoint):
@@ -248,13 +253,17 @@ def build_langchain_llm(llm_cfg: LLMConfig):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        return LangchainLLMWrapper(raw_llm)
+        # RAGAS defaults (timeout=180s, max_retries=10, max_wait=60s) mean a bad API
+        # key/deployment can silently retry for 10+ minutes before failing. Tighten
+        # this so credential/config errors surface in seconds instead.
+        return LangchainLLMWrapper(raw_llm, run_config=RunConfig(timeout=30, max_retries=2, max_wait=15))
 
 
 def build_langchain_embeddings(llm_cfg: LLMConfig):
     """Build a Ragas-wrapped Embeddings object based on provider config."""
     import warnings
     from ragas.embeddings import LangchainEmbeddingsWrapper
+    from ragas.run_config import RunConfig
 
     if llm_cfg.provider == "azure":
         if _is_foundry_v1_endpoint(llm_cfg.azure_endpoint):
@@ -285,4 +294,15 @@ def build_langchain_embeddings(llm_cfg: LLMConfig):
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", DeprecationWarning)
-        return LangchainEmbeddingsWrapper(raw_embeddings)
+        return LangchainEmbeddingsWrapper(raw_embeddings, run_config=RunConfig(timeout=30, max_retries=2, max_wait=15))
+
+
+def check_llm_credentials(llm) -> None:
+    """Make one cheap direct call to confirm the API key/endpoint/deployment work.
+
+    Bypasses RAGAS's retry wrapper entirely (calls the raw langchain model), so a bad
+    credential fails on the first request instead of waiting out RAGAS's retry budget.
+    Call this before running a full evaluation so misconfiguration surfaces immediately
+    with the real provider error, rather than showing up later as unexplained NaNs.
+    """
+    llm.langchain_llm.invoke("Reply with just the word: ok")

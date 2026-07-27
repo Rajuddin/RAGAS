@@ -11,8 +11,10 @@ Streamlit page for running a single RAGAS evaluation.
 import json
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 from datasets import Dataset
 
@@ -23,11 +25,13 @@ from ragas.metrics import (
     ContextPrecision,
     ContextRecall,
 )
+from ragas.run_config import RunConfig
 
 from config_loader import (
     load_config,
     build_langchain_llm,
     build_langchain_embeddings,
+    check_llm_credentials,
     save_llm_config,
     save_rag_api_config,
     LLMConfig,
@@ -37,6 +41,22 @@ from rag_client import query_rag_system, build_payload
 import allure_utils
 
 ALLURE_REPORT_DIR = Path(__file__).parent.parent / "allure-report"
+
+# Applies to both Single Case and Batch evaluation: an LLM call is retried at most
+# this many times before the evaluation is treated as failed.
+MAX_RETRIES = 2
+
+# ragas.evaluate() defaults to RunConfig(timeout=180, max_retries=10, max_wait=60) for
+# every metric's internal LLM calls whenever run_config isn't passed explicitly — even
+# if a tighter RunConfig was set on the LLM/embeddings wrapper, evaluate() silently
+# resets it (see ragas.evaluation.aevaluate: `run_config = run_config or RunConfig()`,
+# then `metric.init(run_config)`). Passing this explicitly to every evaluate() call is
+# what actually makes a bad/slow call fail fast instead of retrying for minutes.
+# timeout=60 (not lower): context_precision alone can legitimately take ~50s on this
+# deployment (one sequential LLM call per context chunk, plus RAGAS's own internal
+# self-correction retry on malformed JSON) — cutting it off early just wastes the work
+# and forces our own outer per-row retry loop to restart the whole row from scratch.
+EVAL_RUN_CONFIG = RunConfig(timeout=60, max_retries=MAX_RETRIES, max_wait=15)
 
 
 def _score_label(score: float) -> str:
@@ -510,14 +530,17 @@ if run_single:
             st.error("Generated Answer and at least one Context are required.")
             st.stop()
 
-    MAX_ATTEMPTS = 3
+    MAX_ATTEMPTS = MAX_RETRIES + 1
     scores = None
     last_exc = None
+    start_ms = int(time.time() * 1000)
+    start_t = time.perf_counter()
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             with st.spinner(f"Running RAGAS evaluation... (attempt {attempt}/{MAX_ATTEMPTS})"):
                 llm = build_langchain_llm(llm_cfg)
                 embeddings = build_langchain_embeddings(llm_cfg)
+                check_llm_credentials(llm)
 
                 dataset = Dataset.from_dict(
                     {
@@ -536,6 +559,7 @@ if run_single:
                         ContextPrecision(llm=llm),
                         ContextRecall(llm=llm),
                     ],
+                    run_config=EVAL_RUN_CONFIG,
                     raise_exceptions=True,
                 )
                 scores = result.to_pandas().iloc[0].to_dict()
@@ -550,6 +574,9 @@ if run_single:
                 st.code(str(exc))
             st.stop()
 
+    stop_ms = int(time.time() * 1000)
+    duration_s = time.perf_counter() - start_t
+
     response_relevancy = float(scores.get("response_relevancy", scores.get("answer_relevancy", 0)))
     faithfulness = float(scores.get("faithfulness", 0))
     context_precision = float(scores.get("context_precision", 0))
@@ -562,11 +589,6 @@ if run_single:
         "Context Recall": context_recall,
     }
     nan_metrics = [name for name, value in metric_values.items() if math.isnan(value)]
-    if nan_metrics:
-        st.error(
-            f"Could not compute: {', '.join(nan_metrics)}. The LLM call for these metrics failed silently. "
-            "Check the API Key / Endpoint / Deployment Name in the LLM Configuration sidebar, then try again."
-        )
 
     allure_utils.write_case_result(
         app_config.allure_results_dir,
@@ -579,15 +601,26 @@ if run_single:
         status="failed" if nan_metrics else "passed",
         status_message=f"Could not compute: {', '.join(nan_metrics)}" if nan_metrics else None,
         story="Single Case Evaluation",
+        start_ms=start_ms,
+        stop_ms=stop_ms,
     )
 
+    if nan_metrics:
+        st.error(
+            f"Evaluation failed: could not compute {', '.join(nan_metrics)} after {MAX_ATTEMPTS} "
+            f"attempt(s) ({MAX_RETRIES} retries). The LLM call for these metrics failed silently. "
+            "Check the API Key / Endpoint / Deployment Name in the LLM Configuration sidebar, then try again."
+        )
+        st.stop()
+
     st.subheader("Scores")
-    cols = st.columns(4)
+    cols = st.columns(5)
     for col, name, value in zip(cols, metric_values.keys(), metric_values.values()):
         if math.isnan(value):
             col.metric(name, "—")
         else:
             col.metric(name, f"{value:.4f}", _score_label(value))
+    cols[4].metric("Time Taken", f"{duration_s:.2f}s")
 
 if run_batch:
     if batch_path.strip():
@@ -675,6 +708,7 @@ if run_batch:
                 ContextPrecision(llm=llm),
                 ContextRecall(llm=llm),
             ],
+            run_config=EVAL_RUN_CONFIG,
             # A single failed row shouldn't sink the whole batch — surface NaNs per row/metric instead
             # (retried below, since these are usually the same transient JSON-formatting glitches that
             # Single Case mode retries for).
@@ -689,55 +723,98 @@ if run_batch:
                 result_df[col] = float("nan")
         return result_df
 
-    with st.spinner(f"Running RAGAS evaluation on {len(test_ids)} test case(s)..."):
-        llm = build_langchain_llm(llm_cfg)
-        embeddings = build_langchain_embeddings(llm_cfg)
+    llm = build_langchain_llm(llm_cfg)
+    embeddings = build_langchain_embeddings(llm_cfg)
 
-        dataset = Dataset.from_dict(
-            {
-                "question": questions,
-                "answer": answers,
-                "contexts": contexts_list,
-                "ground_truth": ground_truths,
-            }
-        )
-
+    with st.spinner("Checking LLM credentials..."):
         try:
-            df = _normalize(_run_ragas(dataset).to_pandas())
+            check_llm_credentials(llm)
         except Exception as exc:
             st.error(_friendly_llm_error(exc))
             with st.expander("Technical details"):
                 st.code(str(exc))
             st.stop()
 
-        MAX_BATCH_ATTEMPTS = 3
-        for attempt in range(2, MAX_BATCH_ATTEMPTS + 1):
-            missing_positions = [i for i in range(len(df)) if df.iloc[i][metric_cols].isna().any()]
-            if not missing_positions:
-                break
-            st.caption(
-                f"Retrying {len(missing_positions)} test case(s) with missing metrics "
-                f"(attempt {attempt}/{MAX_BATCH_ATTEMPTS})..."
-            )
-            try:
-                retry_df = _normalize(_run_ragas(dataset.select(missing_positions)).to_pandas())
-            except Exception:
-                continue
-            for retry_pos, orig_pos in enumerate(missing_positions):
-                for col in metric_cols:
-                    new_val = float(retry_df.iloc[retry_pos][col])
-                    if not math.isnan(new_val) and math.isnan(float(df.iloc[orig_pos][col])):
-                        df.iat[orig_pos, df.columns.get_loc(col)] = new_val
+    dataset = Dataset.from_dict(
+        {
+            "question": questions,
+            "answer": answers,
+            "contexts": contexts_list,
+            "ground_truth": ground_truths,
+        }
+    )
 
+    # Each test case is evaluated in its own evaluate() call (rather than one batched
+    # call across all rows) so it gets an accurate individual start/stop duration. To
+    # avoid losing RAGAS's inter-row parallelism, up to `batch_size` test cases run
+    # concurrently on separate threads — each call gets its own asyncio event loop
+    # (safe: this page is plain sync code, so there's no shared/running loop to conflict).
+    MAX_BATCH_ATTEMPTS = MAX_RETRIES + 1
+
+    def _evaluate_row(i: int) -> dict:
+        row_ds = dataset.select([i])
+        start_ms = int(time.time() * 1000)
+        start_t = time.perf_counter()
+        row_df = None
+        for attempt in range(1, MAX_BATCH_ATTEMPTS + 1):
+            try:
+                row_df = _normalize(_run_ragas(row_ds).to_pandas())
+            except Exception:
+                row_df = None
+            if row_df is not None and not row_df.iloc[0][metric_cols].isna().any():
+                break
+        stop_ms = int(time.time() * 1000)
+        duration_s = time.perf_counter() - start_t
+
+        if row_df is None:
+            row_dict = {col: float("nan") for col in metric_cols}
+            row_dict.update(
+                {
+                    "user_input": questions[i],
+                    "response": answers[i],
+                    "reference": ground_truths[i],
+                    "retrieved_contexts": contexts_list[i],
+                }
+            )
+        else:
+            row_dict = row_df.iloc[0].to_dict()
+        row_dict["duration_s"] = duration_s
+        row_dict["start_ms"] = start_ms
+        row_dict["stop_ms"] = stop_ms
+        return row_dict
+
+    concurrency = max(1, min(app_config.batch_size, len(test_ids)))
+    row_records = [None] * len(test_ids)
+    completed = 0
+    progress = st.progress(0.0, text=f"Evaluating test case(s) (0/{len(test_ids)})...")
+    with ThreadPoolExecutor(max_workers=concurrency) as pool:
+        futures = {pool.submit(_evaluate_row, i): i for i in range(len(test_ids))}
+        for future in as_completed(futures):
+            i = futures[future]
+            row_records[i] = future.result()
+            completed += 1
+            progress.progress(
+                completed / len(test_ids),
+                text=f"Evaluated {completed}/{len(test_ids)} test case(s)...",
+            )
+    progress.empty()
+
+    df = pd.DataFrame(row_records)
     df.insert(0, "test_id", test_ids)
 
+    failed_case_details = []
     for _, row in df.iterrows():
+        missing_metrics = [
+            metric_labels[c] for c in metric_cols if isinstance(row[c], float) and math.isnan(row[c])
+        ]
         row_metrics = {
             metric_labels[c]: float(row[c])
             for c in metric_cols
             if not (isinstance(row[c], float) and math.isnan(row[c]))
         }
-        has_nan = len(row_metrics) < len(metric_cols)
+        has_nan = bool(missing_metrics)
+        if has_nan:
+            failed_case_details.append(f"{row['test_id']}: {', '.join(missing_metrics)}")
         allure_utils.write_case_result(
             app_config.allure_results_dir,
             test_id=row["test_id"],
@@ -749,7 +826,18 @@ if run_batch:
             status="failed" if has_nan else "passed",
             status_message="One or more metrics could not be computed." if has_nan else None,
             story="Batch Evaluation",
+            start_ms=int(row["start_ms"]),
+            stop_ms=int(row["stop_ms"]),
         )
+
+    if failed_case_details:
+        st.error(
+            f"Evaluation failed: {len(failed_case_details)} of {len(df)} test case(s) have metrics that "
+            f"could not be computed after {MAX_BATCH_ATTEMPTS} attempt(s) ({MAX_RETRIES} retries):"
+        )
+        for detail in failed_case_details:
+            st.write(f"- {detail}")
+        st.stop()
 
     st.subheader("Summary — Averages Across All Test Cases")
     summary_cols = st.columns(4)
@@ -760,21 +848,19 @@ if run_batch:
         else:
             col_widget.metric(metric_labels[metric_key], f"{avg_value:.4f}", _score_label(avg_value))
 
-    n_with_failures = int(df[metric_cols].isna().any(axis=1).sum())
-    if n_with_failures:
-        st.warning(
-            f"{n_with_failures} of {len(df)} test case(s) have at least one metric that could not be "
-            "computed (shown as — below). This can happen on transient LLM formatting glitches — try "
-            "re-running the batch."
-        )
+    st.caption(
+        f"Total evaluation time: {df['duration_s'].sum():.2f}s "
+        f"(average {df['duration_s'].mean():.2f}s per test case)"
+    )
 
     st.subheader(f"Per-Case Results ({len(df)} test case{'s' if len(df) != 1 else ''})")
-    display_df = df[["test_id"] + metric_cols].copy()
-    display_df.columns = ["Test ID"] + [metric_labels[c] for c in metric_cols]
-    for col_name in display_df.columns[1:]:
+    display_df = df[["test_id"] + metric_cols + ["duration_s"]].copy()
+    display_df.columns = ["Test ID"] + [metric_labels[c] for c in metric_cols] + ["Duration (s)"]
+    for col_name in [metric_labels[c] for c in metric_cols]:
         display_df[col_name] = display_df[col_name].apply(
             lambda v: "—" if (isinstance(v, float) and math.isnan(v)) else round(v, 4)
         )
+    display_df["Duration (s)"] = display_df["Duration (s)"].round(2)
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     with st.expander("Full details per test case (query, ground truth, answer, contexts)"):
