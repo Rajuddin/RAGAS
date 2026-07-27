@@ -51,5 +51,10 @@ REM install step needed here, only a Java runtime on the machine.
 echo.
 echo Starting Streamlit app...
 echo.
-streamlit run app.py
+REM Invoke this venv's own interpreter directly, not the bare "streamlit" command —
+REM if a differently-located venv's Scripts dir is earlier on PATH (or this .venv was
+REM ever copied from elsewhere), "streamlit" can resolve to a launcher stub that
+REM silently runs a different venv's Python, leaving two servers fighting over the
+REM same port with mismatched code.
+".venv\Scripts\python.exe" -m streamlit run app.py
 pause

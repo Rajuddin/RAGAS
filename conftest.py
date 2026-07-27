@@ -105,7 +105,7 @@ def test_dataset(pytestconfig) -> List[Dict[str, Any]]:
         return [{"test_id": "TC_INLINE", "query": single_query, "ground_truth": single_gt}]
 
     # Fallback: sample data bundled with the project
-    default_path = Path(__file__).parent / "test_data" / "sample_test_data.json"
+    default_path = Path(__file__).parent / "test_data" / "sample_test_data - With-API.json"
     if default_path.exists():
         return _load_test_data_from_json(str(default_path))
 
@@ -132,7 +132,7 @@ def rag_responses(test_dataset, app_config) -> List[Dict[str, Any]]:
         ground_truth = item["ground_truth"]
         test_id = item.get("test_id", f"TC_{len(results) + 1:03d}")
 
-        generated_answer, contexts = query_rag_system(query, app_config.rag_api)
+        generated_answer, contexts = query_rag_system(item, app_config.rag_api)
 
         results.append(
             {
