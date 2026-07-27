@@ -10,6 +10,7 @@ Streamlit page for running a single RAGAS evaluation.
 
 import json
 import math
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -17,15 +18,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from datasets import Dataset
+from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
 
 from ragas import evaluate
-from ragas.metrics import (
-    ResponseRelevancy,
-    Faithfulness,
-    ContextPrecision,
-    ContextRecall,
-)
-from ragas.run_config import RunConfig
 
 from config_loader import (
     load_config,
@@ -38,25 +33,17 @@ from config_loader import (
     RAGApiConfig,
 )
 from rag_client import query_rag_system, build_payload
+from ragas_metrics import (
+    MAX_RETRIES,
+    EVAL_RUN_CONFIG,
+    METRIC_BUILDERS,
+    METRIC_LABELS,
+    configured_metric_keys as _configured_metric_keys,
+    evaluate_single_row,
+)
 import allure_utils
 
 ALLURE_REPORT_DIR = Path(__file__).parent.parent / "allure-report"
-
-# Applies to both Single Case and Batch evaluation: an LLM call is retried at most
-# this many times before the evaluation is treated as failed.
-MAX_RETRIES = 2
-
-# ragas.evaluate() defaults to RunConfig(timeout=180, max_retries=10, max_wait=60) for
-# every metric's internal LLM calls whenever run_config isn't passed explicitly — even
-# if a tighter RunConfig was set on the LLM/embeddings wrapper, evaluate() silently
-# resets it (see ragas.evaluation.aevaluate: `run_config = run_config or RunConfig()`,
-# then `metric.init(run_config)`). Passing this explicitly to every evaluate() call is
-# what actually makes a bad/slow call fail fast instead of retrying for minutes.
-# timeout=60 (not lower): context_precision alone can legitimately take ~50s on this
-# deployment (one sequential LLM call per context chunk, plus RAGAS's own internal
-# self-correction retry on malformed JSON) — cutting it off early just wastes the work
-# and forces our own outer per-row retry loop to restart the whole row from scratch.
-EVAL_RUN_CONFIG = RunConfig(timeout=60, max_retries=MAX_RETRIES, max_wait=15)
 
 
 def _score_label(score: float) -> str:
@@ -230,6 +217,18 @@ if allure_col2.button("Clear Previous Results"):
 
 if st.session_state.get("allure_report_url"):
     st.sidebar.link_button("Open Allure Report ↗", st.session_state["allure_report_url"])
+
+st.sidebar.divider()
+
+st.sidebar.header("Metrics")
+selected_metric_keys = st.sidebar.multiselect(
+    "Metrics to evaluate",
+    options=list(METRIC_BUILDERS.keys()),
+    default=_configured_metric_keys(app_config),
+    format_func=lambda k: METRIC_LABELS[k],
+    help="Defaults to config.yaml's ragas.metrics list. Change here to override for this run only "
+    "— context_precision and context_recall are the slowest (one LLM call per context chunk each).",
+)
 
 st.sidebar.divider()
 
@@ -504,6 +503,10 @@ run_single = eval_mode == "Single Case" and st.button("Run Evaluation", type="pr
 run_batch = eval_mode == "Batch (JSON file)" and st.button("Run Batch Evaluation", type="primary")
 
 if run_single:
+    if not selected_metric_keys:
+        st.error("Select at least one metric to evaluate in the sidebar.")
+        st.stop()
+
     if not query.strip() or not ground_truth.strip():
         st.error("Query and Ground Truth are required.")
         st.stop()
@@ -530,6 +533,8 @@ if run_single:
             st.error("Generated Answer and at least one Context are required.")
             st.stop()
 
+    metric_keys = selected_metric_keys
+
     MAX_ATTEMPTS = MAX_RETRIES + 1
     scores = None
     last_exc = None
@@ -553,12 +558,7 @@ if run_single:
 
                 result = evaluate(
                     dataset=dataset,
-                    metrics=[
-                        ResponseRelevancy(llm=llm, embeddings=embeddings),
-                        Faithfulness(llm=llm),
-                        ContextPrecision(llm=llm),
-                        ContextRecall(llm=llm),
-                    ],
+                    metrics=[METRIC_BUILDERS[k](llm, embeddings) for k in metric_keys],
                     run_config=EVAL_RUN_CONFIG,
                     raise_exceptions=True,
                 )
@@ -577,17 +577,11 @@ if run_single:
     stop_ms = int(time.time() * 1000)
     duration_s = time.perf_counter() - start_t
 
-    response_relevancy = float(scores.get("response_relevancy", scores.get("answer_relevancy", 0)))
-    faithfulness = float(scores.get("faithfulness", 0))
-    context_precision = float(scores.get("context_precision", 0))
-    context_recall = float(scores.get("context_recall", 0))
-
-    metric_values = {
-        "Response Relevancy": response_relevancy,
-        "Faithfulness": faithfulness,
-        "Context Precision": context_precision,
-        "Context Recall": context_recall,
-    }
+    metric_values = {}
+    for k in metric_keys:
+        fallback = scores.get("answer_relevancy") if k == "response_relevancy" else None
+        value = scores.get(k, fallback)
+        metric_values[METRIC_LABELS[k]] = float(value) if value is not None else float("nan")
     nan_metrics = [name for name, value in metric_values.items() if math.isnan(value)]
 
     allure_utils.write_case_result(
@@ -614,13 +608,13 @@ if run_single:
         st.stop()
 
     st.subheader("Scores")
-    cols = st.columns(5)
+    cols = st.columns(len(metric_values) + 1)
     for col, name, value in zip(cols, metric_values.keys(), metric_values.values()):
         if math.isnan(value):
             col.metric(name, "—")
         else:
             col.metric(name, f"{value:.4f}", _score_label(value))
-    cols[4].metric("Time Taken", f"{duration_s:.2f}s")
+    cols[-1].metric("Time Taken", f"{duration_s:.2f}s")
 
 if run_batch:
     if batch_path.strip():
@@ -655,73 +649,13 @@ if run_batch:
         st.error("RAG API Endpoint is required.")
         st.stop()
 
-    test_ids, questions, answers, contexts_list, ground_truths = [], [], [], [], []
-    fetch_errors = []
-
-    if use_api:
-        progress = st.progress(0.0, text="Calling RAG API...")
-        for i, item in enumerate(items):
-            test_id = item.get("test_id", f"TC_{i + 1:03d}")
-            progress.progress(i / len(items), text=f"Calling RAG API for {test_id}...")
-            try:
-                answer_i, contexts_i = query_rag_system(item, rag_api_cfg)
-            except Exception as exc:
-                fetch_errors.append(f"{test_id}: RAG API call failed: {exc}")
-                continue
-            test_ids.append(test_id)
-            questions.append(item["query"])
-            answers.append(answer_i)
-            contexts_list.append(contexts_i)
-            ground_truths.append(item["ground_truth"])
-        progress.empty()
-    else:
-        for i, item in enumerate(items):
-            test_ids.append(item.get("test_id", f"TC_{i + 1:03d}"))
-            questions.append(item["query"])
-            answers.append(item["generated_answer"])
-            contexts_list.append(item["contexts"])
-            ground_truths.append(item["ground_truth"])
-
-    if fetch_errors:
-        st.warning("Some test cases could not be fetched from the RAG API and were skipped:")
-        for err in fetch_errors:
-            st.write(f"- {err}")
-
-    if not test_ids:
-        st.error("No test cases could be evaluated.")
+    if not selected_metric_keys:
+        st.error("Select at least one metric to evaluate in the sidebar.")
         st.stop()
 
-    metric_cols = ["response_relevancy", "faithfulness", "context_precision", "context_recall"]
-    metric_labels = {
-        "response_relevancy": "Response Relevancy",
-        "faithfulness": "Faithfulness",
-        "context_precision": "Context Precision",
-        "context_recall": "Context Recall",
-    }
-
-    def _run_ragas(ds):
-        return evaluate(
-            dataset=ds,
-            metrics=[
-                ResponseRelevancy(llm=llm, embeddings=embeddings),
-                Faithfulness(llm=llm),
-                ContextPrecision(llm=llm),
-                ContextRecall(llm=llm),
-            ],
-            run_config=EVAL_RUN_CONFIG,
-            # A single failed row shouldn't sink the whole batch — surface NaNs per row/metric instead
-            # (retried below, since these are usually the same transient JSON-formatting glitches that
-            # Single Case mode retries for).
-            raise_exceptions=False,
-        )
-
-    def _normalize(result_df):
-        if "answer_relevancy" in result_df.columns and "response_relevancy" not in result_df.columns:
-            result_df["response_relevancy"] = result_df["answer_relevancy"]
-        for col in metric_cols:
-            if col not in result_df.columns:
-                result_df[col] = float("nan")
-        return result_df
+    test_ids = [item.get("test_id", f"TC_{i + 1:03d}") for i, item in enumerate(items)]
+    metric_cols = selected_metric_keys
+    metric_labels = {k: METRIC_LABELS[k] for k in selected_metric_keys}
 
     llm = build_langchain_llm(llm_cfg)
     embeddings = build_langchain_embeddings(llm_cfg)
@@ -735,60 +669,108 @@ if run_batch:
                 st.code(str(exc))
             st.stop()
 
-    dataset = Dataset.from_dict(
-        {
-            "question": questions,
-            "answer": answers,
-            "contexts": contexts_list,
-            "ground_truth": ground_truths,
-        }
-    )
+    # Each test case's RAG API fetch (if enabled) and metric scoring happen together in
+    # one worker per row, so the fetched answer/contexts and the scores appear live as
+    # each row finishes, instead of everything showing up only at the very end. Up to
+    # `batch_size` rows run concurrently on separate threads; add_script_run_ctx is
+    # Streamlit's documented way to let a background thread safely write into its own
+    # pre-created UI container.
+    ROW_STAGGER_SECONDS = 0.4
+    concurrency = max(1, min(app_config.batch_size, len(test_ids)))
 
-    # Each test case is evaluated in its own evaluate() call (rather than one batched
-    # call across all rows) so it gets an accurate individual start/stop duration. To
-    # avoid losing RAGAS's inter-row parallelism, up to `batch_size` test cases run
-    # concurrently on separate threads — each call gets its own asyncio event loop
-    # (safe: this page is plain sync code, so there's no shared/running loop to conflict).
-    MAX_BATCH_ATTEMPTS = MAX_RETRIES + 1
+    row_containers = [st.status(test_id, expanded=False) for test_id in test_ids]
+    main_ctx = get_script_run_ctx()
 
-    def _evaluate_row(i: int) -> dict:
-        row_ds = dataset.select([i])
-        start_ms = int(time.time() * 1000)
-        start_t = time.perf_counter()
-        row_df = None
-        for attempt in range(1, MAX_BATCH_ATTEMPTS + 1):
-            try:
-                row_df = _normalize(_run_ragas(row_ds).to_pandas())
-            except Exception:
-                row_df = None
-            if row_df is not None and not row_df.iloc[0][metric_cols].isna().any():
-                break
-        stop_ms = int(time.time() * 1000)
-        duration_s = time.perf_counter() - start_t
+    def _process_row(i: int) -> dict:
+        add_script_run_ctx(threading.current_thread(), main_ctx)
+        test_id = test_ids[i]
+        item = items[i]
+        query_i = item["query"]
+        ground_truth_i = item["ground_truth"]
+        container = row_containers[i]
 
-        if row_df is None:
-            row_dict = {col: float("nan") for col in metric_cols}
-            row_dict.update(
-                {
-                    "user_input": questions[i],
-                    "response": answers[i],
-                    "reference": ground_truths[i],
-                    "retrieved_contexts": contexts_list[i],
-                }
+        with container:
+            st.caption(query_i)
+            if use_api:
+                st.write("Calling RAG API...")
+                try:
+                    answer_i, contexts_i = query_rag_system(item, rag_api_cfg)
+                except Exception as exc:
+                    st.error(f"RAG API call failed: {exc}")
+                    container.update(label=f"{test_id} — RAG API failed", state="error")
+                    now_ms = int(time.time() * 1000)
+                    return {
+                        "test_id": test_id,
+                        "fetch_error": str(exc),
+                        "user_input": query_i,
+                        "reference": ground_truth_i,
+                        "response": "",
+                        "retrieved_contexts": [],
+                        "duration_s": 0.0,
+                        "start_ms": now_ms,
+                        "stop_ms": now_ms,
+                        **{k: float("nan") for k in metric_cols},
+                    }
+                st.write("**Generated Answer:**", answer_i)
+                st.write("**Contexts:**")
+                for c in contexts_i:
+                    st.text(c if len(c) <= 500 else c[:500] + "…")
+            else:
+                answer_i = item["generated_answer"]
+                contexts_i = item["contexts"]
+                st.write("**Generated Answer:**", answer_i)
+                st.write("**Contexts:**")
+                for c in contexts_i:
+                    st.text(c if len(c) <= 500 else c[:500] + "…")
+
+            def _on_attempt(attempt, max_attempts, retry_keys):
+                if attempt == 1:
+                    st.write("Scoring metrics...")
+                else:
+                    retry_labels = ", ".join(metric_labels[k] for k in retry_keys)
+                    st.write(f"Retrying {retry_labels} (attempt {attempt}/{max_attempts})...")
+
+            start_ms = int(time.time() * 1000)
+            scores, duration_s = evaluate_single_row(
+                llm, embeddings, metric_cols, query_i, answer_i, contexts_i, ground_truth_i,
+                on_attempt=_on_attempt,
             )
-        else:
-            row_dict = row_df.iloc[0].to_dict()
-        row_dict["duration_s"] = duration_s
-        row_dict["start_ms"] = start_ms
-        row_dict["stop_ms"] = stop_ms
+            stop_ms = int(time.time() * 1000)
+
+            missing = [metric_labels[k] for k, v in scores.items() if v != v]
+            for k in metric_cols:
+                v = scores[k]
+                st.write(f"**{metric_labels[k]}:** {'—' if v != v else f'{v:.4f} ({_score_label(v)})'}")
+
+            if missing:
+                container.update(label=f"{test_id} — {duration_s:.1f}s (missing: {', '.join(missing)})", state="error")
+            else:
+                container.update(label=f"{test_id} — done ({duration_s:.1f}s)", state="complete")
+
+        row_dict = dict(scores)
+        row_dict.update(
+            {
+                "test_id": test_id,
+                "user_input": query_i,
+                "response": answer_i,
+                "reference": ground_truth_i,
+                "retrieved_contexts": contexts_i,
+                "duration_s": duration_s,
+                "start_ms": start_ms,
+                "stop_ms": stop_ms,
+            }
+        )
         return row_dict
 
-    concurrency = max(1, min(app_config.batch_size, len(test_ids)))
+    progress = st.progress(0.0, text=f"Evaluating test case(s) (0/{len(test_ids)})...")
     row_records = [None] * len(test_ids)
     completed = 0
-    progress = st.progress(0.0, text=f"Evaluating test case(s) (0/{len(test_ids)})...")
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures = {pool.submit(_evaluate_row, i): i for i in range(len(test_ids))}
+        futures = {}
+        for i in range(len(test_ids)):
+            futures[pool.submit(_process_row, i)] = i
+            if i < concurrency - 1:
+                time.sleep(ROW_STAGGER_SECONDS)
         for future in as_completed(futures):
             i = futures[future]
             row_records[i] = future.result()
@@ -799,8 +781,18 @@ if run_batch:
             )
     progress.empty()
 
-    df = pd.DataFrame(row_records)
-    df.insert(0, "test_id", test_ids)
+    fetch_errors = [r for r in row_records if r.get("fetch_error")]
+    if fetch_errors:
+        st.warning("Some test cases could not be fetched from the RAG API and were skipped from scoring:")
+        for r in fetch_errors:
+            st.write(f"- {r['test_id']}: {r['fetch_error']}")
+
+    ok_records = [r for r in row_records if not r.get("fetch_error")]
+    if not ok_records:
+        st.error("No test cases could be evaluated.")
+        st.stop()
+
+    df = pd.DataFrame(ok_records)
 
     failed_case_details = []
     for _, row in df.iterrows():
@@ -833,14 +825,14 @@ if run_batch:
     if failed_case_details:
         st.error(
             f"Evaluation failed: {len(failed_case_details)} of {len(df)} test case(s) have metrics that "
-            f"could not be computed after {MAX_BATCH_ATTEMPTS} attempt(s) ({MAX_RETRIES} retries):"
+            f"could not be computed after {MAX_RETRIES + 1} attempt(s) ({MAX_RETRIES} retries):"
         )
         for detail in failed_case_details:
             st.write(f"- {detail}")
         st.stop()
 
     st.subheader("Summary — Averages Across All Test Cases")
-    summary_cols = st.columns(4)
+    summary_cols = st.columns(len(metric_cols))
     for col_widget, metric_key in zip(summary_cols, metric_cols):
         avg_value = df[metric_key].mean(skipna=True)
         if math.isnan(avg_value):
