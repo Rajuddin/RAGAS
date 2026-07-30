@@ -39,9 +39,9 @@ python -m pip install --quiet -r requirements.txt
 REM Config check
 if not exist "config.yaml" (
     echo.
-    echo No config.yaml found — creating one from config.example.yaml.
+    echo No config.yaml found — creating one from config.yaml.temp.
     echo Fill in your LLM/API keys ^(use the sidebar in the app, or edit the file directly^).
-    copy config.example.yaml config.yaml >nul
+    copy config.yaml.temp config.yaml >nul
 )
 
 REM Launch

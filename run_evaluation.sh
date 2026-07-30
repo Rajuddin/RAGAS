@@ -45,9 +45,9 @@ pip install --quiet -r requirements.txt
 # ── 3b. Config check ──
 if [ ! -f "config.yaml" ]; then
   echo ""
-  echo "▶ No config.yaml found — creating one from config.example.yaml."
+  echo "▶ No config.yaml found — creating one from config.yaml.temp."
   echo "  Edit config.yaml with your real API keys before running again."
-  cp config.example.yaml config.yaml
+  cp config.yaml.temp config.yaml
 fi
 
 # ── 4. Allure CLI check ──

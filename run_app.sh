@@ -42,9 +42,9 @@ pip install --quiet -r requirements.txt
 # ── 4. Config check ──
 if [ ! -f "config.yaml" ]; then
   echo ""
-  echo "▶ No config.yaml found — creating one from config.example.yaml."
+  echo "▶ No config.yaml found — creating one from config.yaml.temp."
   echo "  Fill in your LLM/API keys (use the sidebar in the app, or edit the file directly)."
-  cp config.example.yaml config.yaml
+  cp config.yaml.temp config.yaml
 fi
 
 # ── 5. Launch ──

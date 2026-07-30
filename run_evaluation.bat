@@ -38,9 +38,9 @@ python -m pip install --quiet -r requirements.txt
 REM Config check
 if not exist "config.yaml" (
     echo.
-    echo No config.yaml found — creating one from config.example.yaml.
+    echo No config.yaml found — creating one from config.yaml.temp.
     echo Edit config.yaml with your real API keys before running again.
-    copy config.example.yaml config.yaml >nul
+    copy config.yaml.temp config.yaml >nul
 )
 
 REM Create allure-results dir

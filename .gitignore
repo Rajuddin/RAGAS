@@ -1,0 +1,3 @@
+# Holds real credentials (API keys, endpoints) — never commit this. Copy
+# config.yaml.temp to config.yaml and fill in your own values instead.
+config.yaml

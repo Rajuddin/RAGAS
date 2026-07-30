@@ -21,7 +21,7 @@ Automated QA evaluation for RAG-based systems using the [RAGAS](https://docs.rag
 ragas_agent/
 ├── app.py                       ← Streamlit UI (single-case & batch evaluation)
 ├── allure_utils.py              ← Writes Allure results from the UI, builds/serves the report
-├── config.example.yaml          ← Sanitized config template (copy to config.yaml, no real keys)
+├── config.yaml.temp             ← Sanitized config template (copy to config.yaml, no real keys; config.yaml is gitignored)
 ├── config_loader.py             ← Config parsing + LangChain LLM builder
 ├── rag_client.py                ← Calls your RAG API, extracts answer + contexts
 ├── conftest.py                  ← Pytest fixtures (config, test data, RAG responses)
@@ -177,7 +177,7 @@ run_app.bat                     # Windows
 ```
 
 `run_app.sh` / `run_app.bat` create the virtual environment, install every dependency from
-`requirements.txt`, copy `config.example.yaml` → `config.yaml` if one doesn't exist yet, and
+`requirements.txt`, copy `config.yaml.temp` → `config.yaml` if one doesn't exist yet, and
 start the app — no manual setup steps required. (You can still do it manually with
 `python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt &&
 streamlit run app.py` if you prefer.)
@@ -194,14 +194,15 @@ streamlit run app.py` if you prefer.)
 
 ## Sharing this project
 
-`config.yaml` holds real API keys — **never share it**. To hand the project to a colleague:
+`config.yaml` holds real API keys — **never share it** (it's gitignored, so `git` won't do this
+for you by accident either). To hand the project to a colleague:
 
 ```bash
 ./package_for_share.sh                 # writes ragas_agent_share.zip
 ```
 
 This zips only the files needed to run the project (source code, run scripts, sample test
-data, and `config.example.yaml`) — no `.venv`, caches, generated reports, or real credentials.
+data, and `config.yaml.temp`) — no `.venv`, caches, generated reports, or real credentials.
 Your colleague then:
 1. Unzips it and runs `./run_app.sh` (or `run_app.bat`) — this auto-creates `config.yaml` from
    the template and installs every Python dependency automatically.

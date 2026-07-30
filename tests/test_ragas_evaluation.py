@@ -16,7 +16,12 @@ import json
 import allure
 import pytest
 
-from ragas_metrics import configured_metric_keys, evaluate_single_row, METRIC_LABELS
+from ragas_metrics import (
+    configured_metric_keys,
+    evaluate_single_row,
+    TooManyContextsError,
+    METRIC_LABELS,
+)
 
 
 def _score_label(score: float) -> str:
@@ -68,9 +73,19 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
                 attachment_type=allure.attachment_type.JSON,
             )
 
-            scores, duration_s = evaluate_single_row(
-                llm, embeddings, metric_keys, query, answer, contexts, ground_truth
-            )
+            try:
+                scores, duration_s, errors = evaluate_single_row(
+                    llm, embeddings, metric_keys, query, answer, contexts, ground_truth
+                )
+            except TooManyContextsError as exc:
+                allure.attach(
+                    str(exc),
+                    name=f"[{test_id}] Context Count Error",
+                    attachment_type=allure.attachment_type.TEXT,
+                )
+                allure.dynamic.parameter("Error", str(exc))
+                failures.append({"test_id": test_id, "error": str(exc)})
+                continue
             missing = [METRIC_LABELS[k] for k, v in scores.items() if v != v]  # NaN check
 
             metric_report = {
@@ -81,7 +96,12 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             }
             if missing:
                 metric_report["could_not_compute"] = missing
-                failures.append({"test_id": test_id, "missing_metrics": missing})
+                metric_report["errors"] = {METRIC_LABELS[k]: msg for k, msg in errors.items()}
+                failures.append({
+                    "test_id": test_id,
+                    "missing_metrics": missing,
+                    "errors": metric_report["errors"],
+                })
 
             allure.attach(
                 json.dumps(metric_report, indent=2),
@@ -96,7 +116,12 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             allure.dynamic.parameter("Duration (s)", f"{duration_s:.2f}")
             for k, v in scores.items():
                 label = METRIC_LABELS[k]
-                value_str = "—" if v != v else f"{v:.4f} ({_score_label(v)})"
+                if v == v:
+                    value_str = f"{v:.4f} ({_score_label(v)})"
+                elif k in errors:
+                    value_str = f"— ({errors[k]})"
+                else:
+                    value_str = "—"
                 allure.dynamic.parameter(label, value_str)
 
             all_scores.append(metric_report)
