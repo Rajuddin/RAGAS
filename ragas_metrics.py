@@ -159,24 +159,31 @@ def diagnose_row(scores: dict) -> dict:
     """Map a row's 4 RAGAS metric scores onto which stage of the RAG pipeline --
     Retrieval, Augmentation, and/or Generation -- looks like it needs work.
 
-    The 4 metrics split into two groups that judge genuinely different things:
-      Retrieval    = context_precision (are relevant chunks ranked near the top?)
-                     + context_recall (does the retrieved set cover everything the
-                     answer needs, at all?). Both judge the retrieved context
-                     itself, independent of what the LLM does with it.
-      Generation   = faithfulness (is the answer grounded in whatever context it
-                     got?) + response_relevancy (does the answer address the
-                     actual question asked?). Both judge the LLM's output, given
-                     whatever context it received.
+    The 4 metrics split into two groups that judge genuinely different things --
+    and, importantly, two different notions of "the answer":
+      Retrieval    = context_precision + context_recall. Both judge these against
+                     the GROUND-TRUTH answer you supplied, not the RAG system's
+                     generated one (that's how ragas itself defines them --
+                     LLMContextPrecisionWithReference/LLMContextRecall both score
+                     against `reference`, never `response`). context_recall asks:
+                     does the retrieved set cover everything the ground-truth
+                     answer needs, at all? context_precision asks: are the chunks
+                     that were actually useful for the ground-truth answer ranked
+                     near the top? Both judge the retrieved context itself,
+                     independent of what the LLM's own generated answer said.
+      Generation   = faithfulness + response_relevancy. Both judge the RAG
+                     system's actual generated answer: faithfulness asks whether
+                     it's grounded in whatever context it got; response_relevancy
+                     asks whether it addresses the actual question asked.
 
     Augmentation -- how the retrieved context got assembled into the prompt the
     generation LLM actually saw (chunk ordering, truncation, formatting) -- isn't
     directly measured by any single RAGAS metric here, since this project evaluates
     an external RAG system's already-generated answer rather than controlling that
     assembly step itself. Its fingerprint is *good* retrieval scores paired with
-    *poor* faithfulness: the right material was available, yet the answer isn't
-    grounded in it. That pattern is equally consistent with a botched hand-off into
-    the prompt (augmentation) or the model disregarding perfectly good context
+    *poor* faithfulness: the right material was available, yet the generated answer
+    isn't grounded in it. That pattern is equally consistent with a botched hand-off
+    into the prompt (augmentation) or the model disregarding perfectly good context
     (generation) -- the two can't be told apart from scores alone, so both are
     surfaced together for that specific pattern rather than guessing which one.
 
@@ -184,8 +191,8 @@ def diagnose_row(scores: dict) -> dict:
     diagnostic (hard to stay grounded in context that wasn't good to begin with),
     so it's noted as a likely symptom rather than raising Augmentation/Generation
     again -- fix retrieval first, then re-evaluate. response_relevancy, by
-    contrast, is raised independently of retrieval quality: an off-topic answer is
-    off-topic regardless of what was retrieved.
+    contrast, is raised independently of retrieval quality: an off-topic generated
+    answer is off-topic regardless of what was retrieved.
 
     Returns {"focus_areas": [...], "reasons": [...], "summary": str,
              "possible_fixes": {...}, "disclaimer": str}:
@@ -242,7 +249,7 @@ def diagnose_row(scores: dict) -> dict:
         if recall is not None and recall < LOW_SCORE_THRESHOLD:
             reasons.append(
                 f"context_recall {recall:.2f} — retrieved context doesn't cover everything the "
-                "answer needs (retrieval coverage, chunking, or a knowledge-base gap)"
+                "ground-truth answer needs (retrieval coverage, chunking, or a knowledge-base gap)"
             )
             bad_bits.append(f"context_recall is low ({recall:.2f})")
         summary_parts.append(
@@ -266,25 +273,25 @@ def diagnose_row(scores: dict) -> dict:
         elif retrieval_confirmed_good:
             focus_areas.extend(["Augmentation", "Generation"])
             reasons.append(
-                f"faithfulness {faithfulness:.2f} despite good retrieval — the answer isn't "
-                "grounded in context that was actually available (augmentation hand-off into "
-                "the prompt, or generation grounding)"
+                f"faithfulness {faithfulness:.2f} despite good retrieval — the generated answer "
+                "isn't grounded in context that was actually available (augmentation hand-off "
+                "into the prompt, or generation grounding)"
             )
             summary_parts.append(
                 f"context_precision ({precision:.2f}) and context_recall ({recall:.2f}) are both "
                 f"healthy, yet faithfulness is low ({faithfulness:.2f}) — the right material was "
-                "retrieved, but the final answer isn't grounded in it. That points at either how "
-                "the context was assembled into the prompt (augmentation) or how the model used "
-                "it (generation)."
+                "retrieved, but the final generated answer isn't grounded in it. That points at "
+                "either how the context was assembled into the prompt (augmentation) or how the "
+                "model used it (generation)."
             )
         else:
             # context_precision and/or context_recall weren't computed for this row, so
             # retrieval quality is unverified, not confirmed good -- don't claim otherwise.
             focus_areas.extend(["Augmentation", "Generation"])
             reasons.append(
-                f"faithfulness {faithfulness:.2f} — the answer isn't grounded in its context, but "
-                "context_precision/context_recall weren't computed for this row, so retrieval "
-                "quality can't be ruled out as a contributing cause either"
+                f"faithfulness {faithfulness:.2f} — the generated answer isn't grounded in its "
+                "context, but context_precision/context_recall weren't computed for this row, so "
+                "retrieval quality can't be ruled out as a contributing cause either"
             )
             summary_parts.append(
                 f"faithfulness is low ({faithfulness:.2f}), but context_precision/context_recall "
@@ -296,19 +303,19 @@ def diagnose_row(scores: dict) -> dict:
         if "Generation" not in focus_areas:
             focus_areas.append("Generation")
         reasons.append(
-            f"response_relevancy {relevancy:.2f} — the answer doesn't directly address the "
-            "question asked (generation focus/prompt)"
+            f"response_relevancy {relevancy:.2f} — the generated answer doesn't directly address "
+            "the question asked (generation focus/prompt)"
         )
         if faithfulness is not None and faithfulness >= LOW_SCORE_THRESHOLD:
             summary_parts.append(
-                f"The answer is grounded in its context (faithfulness {faithfulness:.2f}) but "
-                f"response_relevancy is low ({relevancy:.2f}) — it accurately reflects the "
+                f"The generated answer is grounded in its context (faithfulness {faithfulness:.2f}) "
+                f"but response_relevancy is low ({relevancy:.2f}) — it accurately reflects the "
                 "context without actually answering the question that was asked."
             )
         else:
             summary_parts.append(
-                f"response_relevancy is low ({relevancy:.2f}) — the answer doesn't directly "
-                "address the question asked."
+                f"response_relevancy is low ({relevancy:.2f}) — the generated answer doesn't "
+                "directly address the question asked."
             )
 
     if not focus_areas:
@@ -540,7 +547,10 @@ def build_metric_tooltip(key: str, score, reasons: dict, max_items: int = 5):
         lines = [f"- Context[{c['index']}]: {c['reason']}" for c in bad[:max_items]]
         if len(bad) > max_items:
             lines.append(f"- ...and {len(bad) - max_items} more chunk(s) judged not useful")
-        return "**Why this is low — context chunks judged not useful:**\n" + "\n".join(lines)
+        return (
+            "**Why this is low — context chunks judged not useful for arriving at the "
+            "ground-truth answer:**\n" + "\n".join(lines)
+        )
 
     if key == "context_recall":
         bad = [s for s in reasons.get("statements", []) if not s["attributed"]]
@@ -562,7 +572,7 @@ def build_metric_tooltip(key: str, score, reasons: dict, max_items: int = 5):
         if len(bad) > max_items:
             lines.append(f"- ...and {len(bad) - max_items} more statement(s) not grounded")
         return (
-            "**Why this is low — answer statements not grounded in retrieved "
+            "**Why this is low — generated-answer statements not grounded in retrieved "
             "context:**\n" + "\n".join(lines)
         )
 
@@ -572,11 +582,11 @@ def build_metric_tooltip(key: str, score, reasons: dict, max_items: int = 5):
             return None
         lines = [
             f"- Re-derived question: \"{q['question']}\""
-            + (" (answer flagged as vague/evasive)" if q["noncommittal"] else "")
+            + (" (generated answer flagged as vague/evasive)" if q["noncommittal"] else "")
             for q in questions[:max_items]
         ]
         return (
-            "**Why this is low — questions re-derived from the answer, compared "
+            "**Why this is low — questions re-derived from the generated answer, compared "
             "against what was actually asked:**\n" + "\n".join(lines)
         )
 
