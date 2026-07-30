@@ -19,6 +19,7 @@ import pytest
 from ragas_metrics import (
     configured_metric_keys,
     evaluate_single_row,
+    diagnose_row,
     TooManyContextsError,
     METRIC_LABELS,
 )
@@ -74,7 +75,7 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             )
 
             try:
-                scores, duration_s, errors = evaluate_single_row(
+                scores, duration_s, errors, token_usage = evaluate_single_row(
                     llm, embeddings, metric_keys, query, answer, contexts, ground_truth
                 )
             except TooManyContextsError as exc:
@@ -87,12 +88,15 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
                 failures.append({"test_id": test_id, "error": str(exc)})
                 continue
             missing = [METRIC_LABELS[k] for k, v in scores.items() if v != v]  # NaN check
+            diagnosis = diagnose_row(scores)
 
             metric_report = {
                 "test_id": test_id,
                 "duration_s": round(duration_s, 2),
+                "tokens": token_usage,
                 "metrics": {k: round(v, 4) for k, v in scores.items() if v == v},
                 "interpretation": {k: _score_label(v) for k, v in scores.items() if v == v},
+                "diagnosis": diagnosis,
             }
             if missing:
                 metric_report["could_not_compute"] = missing
@@ -114,6 +118,15 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             allure.dynamic.parameter("Generated Answer", answer)
             allure.dynamic.parameter("Contexts", " | ".join(contexts))
             allure.dynamic.parameter("Duration (s)", f"{duration_s:.2f}")
+            allure.dynamic.parameter(
+                "Tokens Used",
+                f"{token_usage['total_tokens']} (in: {token_usage['input_tokens']}, "
+                f"out: {token_usage['output_tokens']})",
+            )
+            allure.dynamic.parameter(
+                "Suggested Focus",
+                " + ".join(diagnosis["focus_areas"]) if diagnosis["focus_areas"] else "Healthy",
+            )
             for k, v in scores.items():
                 label = METRIC_LABELS[k]
                 if v == v:
@@ -133,11 +146,22 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             if values:
                 averages[k] = round(sum(values) / len(values), 4)
 
+        focus_area_counts = {}
+        for s in all_scores:
+            for area in s["diagnosis"]["focus_areas"]:
+                focus_area_counts[area] = focus_area_counts.get(area, 0) + 1
+
         summary = {
             "total_test_cases": len(all_scores),
             "failed_cases": len(failures),
             "metrics_evaluated": metric_keys,
             "averages": averages,
+            "total_tokens": {
+                "input_tokens": sum(s["tokens"]["input_tokens"] for s in all_scores),
+                "output_tokens": sum(s["tokens"]["output_tokens"] for s in all_scores),
+                "total_tokens": sum(s["tokens"]["total_tokens"] for s in all_scores),
+            },
+            "suggested_focus_areas": focus_area_counts,
             "per_case": all_scores,
         }
         allure.attach(

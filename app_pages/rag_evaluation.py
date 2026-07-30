@@ -40,7 +40,9 @@ from ragas_metrics import (
     METRIC_LABELS,
     configured_metric_keys as _configured_metric_keys,
     evaluate_single_row,
+    diagnose_row,
     TooManyContextsError,
+    _parse_token_usage,
 )
 import allure_utils
 
@@ -257,7 +259,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                 job.set_row_status(i, f"Retrying {labels} (attempt {attempt}/{max_attempts})...")
 
         try:
-            scores, duration_s, errors = evaluate_single_row(
+            scores, duration_s, errors, token_usage = evaluate_single_row(
                 llm, embeddings, metric_cols, query_i, answer_i, contexts_i, ground_truth_i,
                 on_attempt=_on_attempt,
             )
@@ -276,6 +278,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                     "duration_s": 0.0,
                     "start_ms": start_ms,
                     "stop_ms": now_ms,
+                    "total_tokens": 0,
                     **{k: float("nan") for k in metric_cols},
                 },
             )
@@ -303,6 +306,9 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                 "start_ms": start_ms,
                 "stop_ms": stop_ms,
                 "errors": errors,
+                "total_tokens": token_usage["total_tokens"],
+                "input_tokens": token_usage["input_tokens"],
+                "output_tokens": token_usage["output_tokens"],
             }
         )
         job.set_row_result(i, row_dict)
@@ -873,8 +879,21 @@ if run_single:
                     metrics=[METRIC_BUILDERS[k](llm, embeddings) for k in metric_keys],
                     run_config=EVAL_RUN_CONFIG,
                     raise_exceptions=True,
+                    token_usage_parser=_parse_token_usage,
                 )
                 scores = result.to_pandas().iloc[0].to_dict()
+                try:
+                    usage = result.total_tokens()
+                    token_usages = usage if isinstance(usage, list) else [usage]
+                    in_tok = sum(u.input_tokens for u in token_usages)
+                    out_tok = sum(u.output_tokens for u in token_usages)
+                except ValueError:
+                    in_tok = out_tok = 0
+                token_usage = {
+                    "input_tokens": in_tok,
+                    "output_tokens": out_tok,
+                    "total_tokens": in_tok + out_tok,
+                }
             break
         except Exception as exc:
             last_exc = exc
@@ -890,11 +909,15 @@ if run_single:
     duration_s = time.perf_counter() - start_t
 
     metric_values = {}
+    raw_scores = {}
     for k in metric_keys:
         fallback = scores.get("answer_relevancy") if k == "response_relevancy" else None
         value = scores.get(k, fallback)
-        metric_values[METRIC_LABELS[k]] = float(value) if value is not None else float("nan")
+        value = float(value) if value is not None else float("nan")
+        metric_values[METRIC_LABELS[k]] = value
+        raw_scores[k] = value
     nan_metrics = [name for name, value in metric_values.items() if math.isnan(value)]
+    diagnosis = diagnose_row(raw_scores)
 
     try:
         allure_utils.write_case_result(
@@ -910,6 +933,8 @@ if run_single:
             story="Single Case Evaluation",
             start_ms=start_ms,
             stop_ms=stop_ms,
+            token_usage=token_usage,
+            diagnosis=diagnosis,
         )
     except Exception as exc:
         # A report-writing failure is a side effect, not a scoring failure -- don't
@@ -927,6 +952,10 @@ if run_single:
 
     st.subheader("Scores")
     st.caption(f"Started: {_fmt_ms(start_ms)}  |  Completed: {_fmt_ms(stop_ms)}")
+    st.caption(
+        f"Tokens used: {token_usage['total_tokens']:,} (input: {token_usage['input_tokens']:,}, "
+        f"output: {token_usage['output_tokens']:,}) -- judge-LLM calls only, embeddings not included"
+    )
     cols = st.columns(len(metric_values) + 1)
     for col, name, value in zip(cols, metric_values.keys(), metric_values.values()):
         if math.isnan(value):
@@ -934,6 +963,18 @@ if run_single:
         else:
             col.metric(name, f"{value:.4f}", _score_label(value))
     cols[-1].metric("Time Taken", f"{duration_s:.2f}s")
+
+    focus_label = " + ".join(diagnosis["focus_areas"]) if diagnosis["focus_areas"] else "Healthy"
+    st.subheader(f"Suggested Focus: {focus_label}")
+    st.write(diagnosis["summary"])
+    for reason in diagnosis["reasons"]:
+        st.caption(f"- {reason}")
+    if diagnosis["possible_fixes"]:
+        for area, fixes in diagnosis["possible_fixes"].items():
+            st.markdown(f"**Possible things to check — {area}:**")
+            for fix in fixes:
+                st.caption(f"- {fix}")
+        st.info(diagnosis["disclaimer"])
 
 if run_batch:
     existing_job = st.session_state.get("batch_job")
@@ -1125,6 +1166,12 @@ if active_job is not None:
                             story="Batch Evaluation",
                             start_ms=int(row["start_ms"]),
                             stop_ms=int(row["stop_ms"]),
+                            token_usage={
+                                "input_tokens": int(row.get("input_tokens", 0)),
+                                "output_tokens": int(row.get("output_tokens", 0)),
+                                "total_tokens": int(row.get("total_tokens", 0)),
+                            },
+                            diagnosis=diagnose_row({k: row[k] for k in metric_cols}),
                         )
                     except Exception as exc:
                         # A report-writing failure is a side effect, not a scoring
@@ -1141,54 +1188,107 @@ if active_job is not None:
                     st.write(f"- {detail}")
 
             if active_job.failed_case_details:
-                st.error(
-                    f"Evaluation failed: {len(active_job.failed_case_details)} of {len(df)} test case(s) have "
-                    f"metrics that could not be computed after {MAX_RETRIES + 1} attempt(s) ({MAX_RETRIES} retries):"
+                # A warning, not an error that replaces the summary below: some metrics
+                # not computing for some rows doesn't mean the batch produced nothing --
+                # every other computed metric/test case is still valid and still shown.
+                st.warning(
+                    f"{len(active_job.failed_case_details)} of {len(df)} test case(s) have metrics that "
+                    f"could not be computed after {MAX_RETRIES + 1} attempt(s) ({MAX_RETRIES} retries) "
+                    "(shown as \"—\" below); the summary and per-case results below still reflect "
+                    "everything else that computed successfully:"
                 )
                 for detail in active_job.failed_case_details:
                     st.write(f"- {detail}")
-            else:
-                st.subheader("Summary — Averages Across All Test Cases")
-                summary_cols = st.columns(len(metric_cols))
-                for col_widget, metric_key in zip(summary_cols, metric_cols):
-                    avg_value = df[metric_key].mean(skipna=True)
-                    if math.isnan(avg_value):
-                        col_widget.metric(metric_labels[metric_key], "—")
-                    else:
-                        col_widget.metric(metric_labels[metric_key], f"{avg_value:.4f}", _score_label(avg_value))
 
+            st.subheader("Summary — Averages Across All Test Cases")
+            summary_cols = st.columns(len(metric_cols))
+            for col_widget, metric_key in zip(summary_cols, metric_cols):
+                avg_value = df[metric_key].mean(skipna=True)
+                if math.isnan(avg_value):
+                    col_widget.metric(metric_labels[metric_key], "—")
+                else:
+                    col_widget.metric(metric_labels[metric_key], f"{avg_value:.4f}", _score_label(avg_value))
+
+            st.caption(
+                f"Total evaluation time: {df['duration_s'].sum():.2f}s "
+                f"(average {df['duration_s'].mean():.2f}s per test case)"
+            )
+            st.caption(
+                f"Total tokens used: {int(df['total_tokens'].sum()):,} "
+                f"(input: {int(df['input_tokens'].sum()):,}, output: {int(df['output_tokens'].sum()):,}) "
+                "-- judge-LLM calls only, embeddings not included"
+            )
+
+            # Per-row diagnosis (see ragas_metrics.diagnose_row): which stage of the
+            # RAG pipeline -- Retrieval, Augmentation, and/or Generation -- looks
+            # like it needs work, based on that row's 4 metric scores.
+            diagnoses = [diagnose_row({k: row[k] for k in metric_cols}) for _, row in df.iterrows()]
+            focus_labels = [
+                " + ".join(d["focus_areas"]) if d["focus_areas"] else "Healthy" for d in diagnoses
+            ]
+            focus_counts = {}
+            for d in diagnoses:
+                for area in d["focus_areas"]:
+                    focus_counts[area] = focus_counts.get(area, 0) + 1
+            if focus_counts:
                 st.caption(
-                    f"Total evaluation time: {df['duration_s'].sum():.2f}s "
-                    f"(average {df['duration_s'].mean():.2f}s per test case)"
-                )
-
-                st.subheader(f"Per-Case Results ({len(df)} test case{'s' if len(df) != 1 else ''})")
-                display_df = df[["test_id"] + metric_cols + ["duration_s"]].copy()
-                display_df.columns = ["Test ID"] + [metric_labels[c] for c in metric_cols] + ["Duration (s)"]
-                for col_name in [metric_labels[c] for c in metric_cols]:
-                    display_df[col_name] = display_df[col_name].apply(
-                        lambda v: "—" if (isinstance(v, float) and math.isnan(v)) else round(v, 4)
+                    "Suggested focus areas across this batch: "
+                    + ", ".join(
+                        f"{area} ({count}/{len(df)} test cases)"
+                        for area, count in sorted(focus_counts.items(), key=lambda kv: -kv[1])
                     )
-                display_df["Duration (s)"] = display_df["Duration (s)"].round(2)
-                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                )
+                all_possible_fixes = {}
+                for d in diagnoses:
+                    for area, fixes in d["possible_fixes"].items():
+                        all_possible_fixes.setdefault(area, fixes)
+                with st.expander("Possible things to check, by focus area"):
+                    for area, _count in sorted(focus_counts.items(), key=lambda kv: -kv[1]):
+                        st.markdown(f"**{area}**")
+                        for fix in all_possible_fixes.get(area, []):
+                            st.caption(f"- {fix}")
+                    st.info(diagnoses[0]["disclaimer"])
+            else:
+                st.caption("Suggested focus areas across this batch: every test case looks healthy.")
 
-                # A checkbox, not st.expander, controls the outer show/hide here: each
-                # test case below is its own st.expander (so it can be opened/closed
-                # independently, and — via `key` — remembers that across reruns), and
-                # Streamlit doesn't allow nesting an expander inside another expander.
-                show_full_details = st.checkbox("Show full details per test case (query, ground truth, answer, contexts)")
-                if show_full_details:
-                    for _, row in df.iterrows():
-                        query_preview = row["user_input"] if len(row["user_input"]) <= 80 else row["user_input"][:80] + "…"
-                        with st.expander(f"{row['test_id']} — {query_preview}", key=f"batch_final_expander_{row['test_id']}"):
-                            st.write("Query:", row["user_input"])
-                            st.write("Ground Truth:", row.get("reference", ""))
-                            st.write("Generated Answer:", row.get("response", ""))
-                            st.write("Contexts:", row.get("retrieved_contexts", []))
-                            st.caption(
-                                f"Started: {_fmt_ms(row.get('start_ms'))}  |  "
-                                f"Completed: {_fmt_ms(row.get('stop_ms'))}"
-                            )
+            st.subheader(f"Per-Case Results ({len(df)} test case{'s' if len(df) != 1 else ''})")
+            display_df = df[["test_id"] + metric_cols + ["duration_s", "total_tokens"]].copy()
+            display_df.columns = (
+                ["Test ID"] + [metric_labels[c] for c in metric_cols] + ["Duration (s)", "Tokens Used"]
+            )
+            display_df["Suggested Focus"] = focus_labels
+            for col_name in [metric_labels[c] for c in metric_cols]:
+                display_df[col_name] = display_df[col_name].apply(
+                    lambda v: "—" if (isinstance(v, float) and math.isnan(v)) else round(v, 4)
+                )
+            display_df["Duration (s)"] = display_df["Duration (s)"].round(2)
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            # A checkbox, not st.expander, controls the outer show/hide here: each
+            # test case below is its own st.expander (so it can be opened/closed
+            # independently, and — via `key` — remembers that across reruns), and
+            # Streamlit doesn't allow nesting an expander inside another expander.
+            show_full_details = st.checkbox("Show full details per test case (query, ground truth, answer, contexts)")
+            if show_full_details:
+                for _, row in df.iterrows():
+                    query_preview = row["user_input"] if len(row["user_input"]) <= 80 else row["user_input"][:80] + "…"
+                    with st.expander(f"{row['test_id']} — {query_preview}", key=f"batch_final_expander_{row['test_id']}"):
+                        st.write("Query:", row["user_input"])
+                        st.write("Ground Truth:", row.get("reference", ""))
+                        st.write("Generated Answer:", row.get("response", ""))
+                        st.write("Contexts:", row.get("retrieved_contexts", []))
+                        st.caption(
+                            f"Started: {_fmt_ms(row.get('start_ms'))}  |  "
+                            f"Completed: {_fmt_ms(row.get('stop_ms'))}"
+                        )
+                        row_diagnosis = diagnose_row({k: row[k] for k in metric_cols})
+                        focus_label = (
+                            " + ".join(row_diagnosis["focus_areas"]) if row_diagnosis["focus_areas"] else "Healthy"
+                        )
+                        st.write(f"**Suggested Focus:** {focus_label}")
+                        st.caption(row_diagnosis["summary"])
+                        for reason in row_diagnosis["reasons"]:
+                            st.caption(f"- {reason}")
         elif snap["status"] != "error":
             st.error("No test cases could be evaluated.")
 

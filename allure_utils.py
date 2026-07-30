@@ -106,6 +106,8 @@ def write_case_result(
     story: str = "Streamlit Evaluation",
     start_ms: Optional[int] = None,
     stop_ms: Optional[int] = None,
+    token_usage: Optional[dict] = None,
+    diagnosis: Optional[dict] = None,
 ) -> None:
     """Write one Allure result (+ JSON attachments) for a single evaluated case.
 
@@ -153,6 +155,8 @@ def write_case_result(
                 {
                     "metrics": {k: round(v, 4) for k, v in metrics.items()},
                     "interpretation": {k: _score_label(v) for k, v in metrics.items()},
+                    "token_usage": token_usage,
+                    "diagnosis": diagnosis,
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -171,6 +175,17 @@ def write_case_result(
         # preview unreadable. The full contexts are still available in the
         # "RAGAS Inputs" attachment on the test's detail page.
     ]
+    if token_usage:
+        parameters.append({
+            "name": "Tokens Used",
+            "value": f"{token_usage['total_tokens']} (in: {token_usage['input_tokens']}, "
+                     f"out: {token_usage['output_tokens']})",
+        })
+    if diagnosis:
+        parameters.append({
+            "name": "Suggested Focus",
+            "value": " + ".join(diagnosis["focus_areas"]) if diagnosis["focus_areas"] else "Healthy",
+        })
     for name, value in metrics.items():
         parameters.append({"name": name, "value": f"{value:.4f} ({_score_label(value)})"})
 
