@@ -165,7 +165,11 @@ def write_case_result(
         {"name": "Query", "value": query},
         {"name": "Ground Truth", "value": ground_truth},
         {"name": "Generated Answer", "value": answer},
-        {"name": "Contexts", "value": " | ".join(contexts)},
+        # Contexts deliberately excluded here: Allure's Suites/Behaviors list views
+        # render a preview of a test's parameters inline next to its name, and the
+        # full context text (often large, raw retrieved-chunk JSON) made that
+        # preview unreadable. The full contexts are still available in the
+        # "RAGAS Inputs" attachment on the test's detail page.
     ]
     for name, value in metrics.items():
         parameters.append({"name": name, "value": f"{value:.4f} ({_score_label(value)})"})
