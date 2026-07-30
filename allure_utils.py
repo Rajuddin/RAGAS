@@ -25,6 +25,7 @@ import threading
 import time
 import uuid
 import zipfile
+from datetime import datetime
 
 import requests
 from pathlib import Path
@@ -119,6 +120,13 @@ def write_case_result(
     start_ms = now_ms if start_ms is None else start_ms
     stop_ms = now_ms if stop_ms is None else stop_ms
 
+    # Drives the Suites tab's 3-level tree (parentSuite > suite > subSuite), keyed
+    # off when this case actually ran so results are browsable/filterable by date:
+    # "Batch Evaluation" (or "Single Case Evaluation") > month > day.
+    run_dt = datetime.fromtimestamp(start_ms / 1000)
+    month_label = run_dt.strftime("%Y-%m (%B)")
+    date_label = run_dt.strftime("%Y-%m-%d")
+
     attachments = []
 
     inputs_attachment_file = f"{uuid.uuid4()}-attachment.json"
@@ -177,7 +185,9 @@ def write_case_result(
             {"name": "epic", "value": "RAG Evaluation"},
             {"name": "feature", "value": "RAGAS Metrics"},
             {"name": "story", "value": story},
-            {"name": "suite", "value": story},
+            {"name": "parentSuite", "value": story},
+            {"name": "suite", "value": month_label},
+            {"name": "subSuite", "value": date_label},
         ],
     }
     if status_message:

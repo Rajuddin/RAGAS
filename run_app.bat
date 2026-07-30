@@ -1,16 +1,16 @@
 @echo off
-REM ─────────────────────────────────────────────────────────────────────────────
+REM -------------------------------------------------------------------------------
 REM run_app.bat
 REM One-shot launcher for the Streamlit UI. Creates the virtual environment and
 REM installs all dependencies automatically on first run, then starts the app.
-REM ─────────────────────────────────────────────────────────────────────────────
+REM -------------------------------------------------------------------------------
 
 cd /d "%~dp0"
 
 echo.
-echo ══════════════════════════════════════════════
-echo   RAGAS Evaluation — Streamlit UI
-echo ══════════════════════════════════════════════
+echo ================================================
+echo   RAGAS Evaluation - Streamlit UI
+echo ================================================
 echo.
 
 REM Check Python
@@ -39,19 +39,19 @@ python -m pip install --quiet -r requirements.txt
 REM Config check
 if not exist "config.yaml" (
     echo.
-    echo No config.yaml found — creating one from config.yaml.temp.
+    echo No config.yaml found - creating one from config.yaml.temp.
     echo Fill in your LLM/API keys ^(use the sidebar in the app, or edit the file directly^).
     copy config.yaml.temp config.yaml >nul
 )
 
 REM Launch
 REM The Allure CLI ^(used by the in-app "Open Allure Report" button^) is downloaded
-REM automatically into .tools\ the first time the button is clicked — no separate
+REM automatically into .tools\ the first time the button is clicked -- no separate
 REM install step needed here, only a Java runtime on the machine.
 echo.
 echo Starting Streamlit app...
 echo.
-REM Invoke this venv's own interpreter directly, not the bare "streamlit" command —
+REM Invoke this venv's own interpreter directly, not the bare "streamlit" command --
 REM if a differently-located venv's Scripts dir is earlier on PATH (or this .venv was
 REM ever copied from elsewhere), "streamlit" can resolve to a launcher stub that
 REM silently runs a different venv's Python, leaving two servers fighting over the

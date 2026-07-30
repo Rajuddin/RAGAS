@@ -1,15 +1,15 @@
 @echo off
-REM ─────────────────────────────────────────────────────────────────────────────
+REM -------------------------------------------------------------------------------
 REM run_evaluation.bat
 REM Install dependencies and execute RAGAS evaluation with Allure reporting.
-REM ─────────────────────────────────────────────────────────────────────────────
+REM -------------------------------------------------------------------------------
 
 cd /d "%~dp0"
 
 echo.
-echo ══════════════════════════════════════════════
+echo ================================================
 echo   RAGAS Evaluation Framework
-echo ══════════════════════════════════════════════
+echo ================================================
 echo.
 
 REM Check Python
@@ -38,7 +38,7 @@ python -m pip install --quiet -r requirements.txt
 REM Config check
 if not exist "config.yaml" (
     echo.
-    echo No config.yaml found — creating one from config.yaml.temp.
+    echo No config.yaml found - creating one from config.yaml.temp.
     echo Edit config.yaml with your real API keys before running again.
     copy config.yaml.temp config.yaml >nul
 )
@@ -66,13 +66,13 @@ if not errorlevel 1 (
 )
 
 echo.
-echo ══════════════════════════════════════════════
+echo ================================================
 if %PYTEST_EXIT%==0 (
     echo   Evaluation COMPLETE - all tests passed
 ) else (
     echo   Evaluation COMPLETE - some tests failed
 )
-echo ══════════════════════════════════════════════
+echo ================================================
 echo.
 pause
 exit /b %PYTEST_EXIT%
