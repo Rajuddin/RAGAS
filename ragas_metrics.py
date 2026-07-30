@@ -390,6 +390,199 @@ def _parse_token_usage(llm_result) -> TokenUsage:
     )
 
 
+class _PromptRecorder:
+    """Wraps one of a metric's internal PydanticPrompt instances (e.g.
+    ContextPrecision.context_precision_prompt) to record every call's (input,
+    output) pair, so evaluate_single_row can recover the judge LLM's structured
+    reason/verdict output *after* the metric itself reduces it to a single float
+    score and discards the rest. Every metric's output schema already includes a
+    natural-language "reason" (or, for response_relevancy, the re-derived
+    question) -- the LLM already generates and gets billed for these tokens; this
+    just stops throwing that text away. Doesn't change behavior and makes no
+    extra LLM calls: it only remembers what the wrapped prompt already returned.
+    """
+
+    def __init__(self, wrapped):
+        self._wrapped = wrapped
+        self.calls = []
+
+    async def generate_multiple(self, *args, **kwargs):
+        result = await self._wrapped.generate_multiple(*args, **kwargs)
+        self.calls.append((kwargs.get("data"), result))
+        return result
+
+    async def generate(self, *args, **kwargs):
+        result = await self._wrapped.generate(*args, **kwargs)
+        self.calls.append((kwargs.get("data"), result))
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self._wrapped, name)
+
+
+# Which attribute on each metric instance holds the PydanticPrompt worth wrapping
+# with _PromptRecorder. faithfulness has two prompts (statement_generator_prompt
+# just splits the answer into plain statement strings, no reasoning -- only
+# nli_statements_prompt, which judges each statement against the context, carries
+# a "reason"); only that one is recorded.
+_METRIC_RECORDER_ATTR = {
+    "context_precision": "context_precision_prompt",
+    "context_recall": "context_recall_prompt",
+    "faithfulness": "nli_statements_prompt",
+    "response_relevancy": "question_generation",
+}
+
+
+def _extract_context_precision_reasons(calls):
+    # One generate_multiple() call per retrieved context chunk (see
+    # LLMContextPrecisionWithReference._ascore's `for context in retrieved_contexts`
+    # loop), in the same order as the row's `contexts` list -- so `index` here lines
+    # up with that list.
+    chunks = []
+    for i, (qac, verdicts) in enumerate(calls):
+        if not verdicts:
+            continue
+        v = verdicts[0]
+        chunks.append({
+            "index": i,
+            "context_preview": (qac.context[:200] if qac is not None else ""),
+            "verdict": v.verdict,
+            "reason": v.reason,
+        })
+    return {"chunks": chunks}
+
+
+def _extract_context_recall_reasons(calls):
+    # A single generate_multiple() call, joining every retrieved context into one
+    # string and classifying each statement in the reference answer against it.
+    if not calls or not calls[0][1]:
+        return {"statements": []}
+    classifications = calls[0][1][0].classifications
+    return {
+        "statements": [
+            {"statement": c.statement, "attributed": c.attributed, "reason": c.reason}
+            for c in classifications
+        ]
+    }
+
+
+def _extract_faithfulness_reasons(calls):
+    # A single generate() call (not generate_multiple -- faithfulness's NLI check
+    # returns one NLIStatementOutput directly), judging each statement extracted
+    # from the generated answer against the joined retrieved context.
+    if not calls:
+        return {"statements": []}
+    _, result = calls[0]
+    return {
+        "statements": [
+            {"statement": s.statement, "verdict": s.verdict, "reason": s.reason}
+            for s in result.statements
+        ]
+    }
+
+
+def _extract_response_relevancy_reasons(calls):
+    # A single generate_multiple() call producing `strictness` (default 3)
+    # re-derived questions from the answer -- no "reason" field exists for this
+    # metric (it's scored via embedding similarity, not an LLM verdict), but the
+    # re-derived questions themselves show why the answer did/didn't seem to
+    # address the actual question, and `noncommittal` flags a vague/evasive answer.
+    if not calls:
+        return {"generated_questions": []}
+    _, outputs = calls[0]
+    return {
+        "generated_questions": [
+            {"question": o.question, "noncommittal": o.noncommittal} for o in outputs
+        ]
+    }
+
+
+_METRIC_REASON_EXTRACTORS = {
+    "context_precision": _extract_context_precision_reasons,
+    "context_recall": _extract_context_recall_reasons,
+    "faithfulness": _extract_faithfulness_reasons,
+    "response_relevancy": _extract_response_relevancy_reasons,
+}
+
+
+def _build_metric_with_recorder(key, llm, embeddings):
+    """Build a metric via METRIC_BUILDERS, then splice a _PromptRecorder into its
+    reasoning prompt attribute (see _METRIC_RECORDER_ATTR) so its judge-LLM output
+    can be recovered after scoring. Returns (metric, recorder)."""
+    metric = METRIC_BUILDERS[key](llm, embeddings)
+    attr = _METRIC_RECORDER_ATTR[key]
+    recorder = _PromptRecorder(getattr(metric, attr))
+    setattr(metric, attr, recorder)
+    return metric, recorder
+
+
+def build_metric_tooltip(key: str, score, reasons: dict, max_items: int = 5):
+    """Build short hover-tooltip markdown explaining *why* a metric scored low, from
+    the per-chunk/per-statement reason data _build_metric_with_recorder captured.
+    Only surfaces the failing sub-verdicts (the chunks/statements that actually
+    dragged the score down) -- the passing ones aren't why it's low, and dumping
+    all of them (up to MAX_CONTEXTS=15 for context_precision) would bury the signal.
+
+    Returns None when there's nothing worth showing: the score isn't low, is
+    missing/NaN, or no reason data was captured for this metric (e.g. it never
+    got its own attempt this row, or extraction silently failed -- see the
+    try/except around _METRIC_REASON_EXTRACTORS in evaluate_single_row).
+    """
+    if score is None or (isinstance(score, float) and math.isnan(score)):
+        return None
+    if score >= LOW_SCORE_THRESHOLD or not reasons:
+        return None
+
+    if key == "context_precision":
+        bad = [c for c in reasons.get("chunks", []) if not c["verdict"]]
+        if not bad:
+            return None
+        lines = [f"- Context[{c['index']}]: {c['reason']}" for c in bad[:max_items]]
+        if len(bad) > max_items:
+            lines.append(f"- ...and {len(bad) - max_items} more chunk(s) judged not useful")
+        return "**Why this is low — context chunks judged not useful:**\n" + "\n".join(lines)
+
+    if key == "context_recall":
+        bad = [s for s in reasons.get("statements", []) if not s["attributed"]]
+        if not bad:
+            return None
+        lines = [f"- \"{s['statement']}\": {s['reason']}" for s in bad[:max_items]]
+        if len(bad) > max_items:
+            lines.append(f"- ...and {len(bad) - max_items} more statement(s) not covered")
+        return (
+            "**Why this is low — ground-truth statements not covered by retrieved "
+            "context:**\n" + "\n".join(lines)
+        )
+
+    if key == "faithfulness":
+        bad = [s for s in reasons.get("statements", []) if not s["verdict"]]
+        if not bad:
+            return None
+        lines = [f"- \"{s['statement']}\": {s['reason']}" for s in bad[:max_items]]
+        if len(bad) > max_items:
+            lines.append(f"- ...and {len(bad) - max_items} more statement(s) not grounded")
+        return (
+            "**Why this is low — answer statements not grounded in retrieved "
+            "context:**\n" + "\n".join(lines)
+        )
+
+    if key == "response_relevancy":
+        questions = reasons.get("generated_questions", [])
+        if not questions:
+            return None
+        lines = [
+            f"- Re-derived question: \"{q['question']}\""
+            + (" (answer flagged as vague/evasive)" if q["noncommittal"] else "")
+            for q in questions[:max_items]
+        ]
+        return (
+            "**Why this is low — questions re-derived from the answer, compared "
+            "against what was actually asked:**\n" + "\n".join(lines)
+        )
+
+    return None
+
+
 def configured_metric_keys(app_config) -> list:
     """Metric keys to run, from config.yaml's ragas.metrics list. Falls back to all
     four if the list is missing/empty/unrecognized."""
@@ -426,7 +619,7 @@ def evaluate_single_row(
     Raises TooManyContextsError if len(contexts) > MAX_CONTEXTS, before making any
     LLM calls — see the comment above MAX_CONTEXTS for why that limit exists.
 
-    Returns (scores, duration_s, errors, token_usage):
+    Returns (scores, duration_s, errors, token_usage, metric_reasons):
       scores    -- {metric_key: float} for every key in metric_keys (NaN if it
                     could not be computed after all attempts)
       duration_s -- total wall-clock time across all attempts
@@ -442,6 +635,12 @@ def evaluate_single_row(
                     response_relevancy) -- ragas's cost tracking doesn't instrument
                     those. All zero if no LLM call ever completed (e.g. every
                     attempt errored before returning a response).
+      metric_reasons -- {metric_key: {...}} the judge LLM's own per-chunk/per-statement
+                    reason data for whichever metrics computed (see
+                    _METRIC_REASON_EXTRACTORS for the shape per metric key); use
+                    build_metric_tooltip(key, score, reasons) to turn this into
+                    display text. Missing entries (not even an empty dict) for a
+                    metric key mean recording/extraction found nothing to capture.
     """
     if len(contexts) > MAX_CONTEXTS:
         raise TooManyContextsError(
@@ -468,13 +667,16 @@ def evaluate_single_row(
     start_t = time.perf_counter()
     scores = {k: float("nan") for k in metric_keys}
     errors = {}
+    metric_reasons = {}
     input_tokens = 0
     output_tokens = 0
     remaining_keys = list(metric_keys)
     for attempt in range(1, max_attempts + 1):
         if on_attempt is not None:
             on_attempt(attempt, max_attempts, remaining_keys)
-        metrics = [METRIC_BUILDERS[k](llm, embeddings) for k in remaining_keys]
+        built = [_build_metric_with_recorder(k, llm, embeddings) for k in remaining_keys]
+        metrics = [m for m, _ in built]
+        recorders = dict(zip(remaining_keys, (r for _, r in built)))
         capture = _JobErrorCapture()
         _RAGAS_EXECUTOR_LOGGER.addHandler(capture)
         try:
@@ -504,6 +706,12 @@ def evaluate_single_row(
         except ValueError:
             pass  # no LLM call completed this attempt (e.g. every metric errored)
 
+        for k, recorder in recorders.items():
+            try:
+                metric_reasons[k] = _METRIC_REASON_EXTRACTORS[k](recorder.calls)
+            except Exception:
+                pass  # best-effort only -- never let reason-extraction break scoring
+
         still_missing = []
         for idx, k in enumerate(remaining_keys):
             fallback = row.get("answer_relevancy") if k == "response_relevancy" else None
@@ -527,4 +735,4 @@ def evaluate_single_row(
         "output_tokens": output_tokens,
         "total_tokens": input_tokens + output_tokens,
     }
-    return scores, duration_s, errors, token_usage
+    return scores, duration_s, errors, token_usage, metric_reasons

@@ -108,6 +108,7 @@ def write_case_result(
     stop_ms: Optional[int] = None,
     token_usage: Optional[dict] = None,
     diagnosis: Optional[dict] = None,
+    metric_reasons: Optional[dict] = None,
 ) -> None:
     """Write one Allure result (+ JSON attachments) for a single evaluated case.
 
@@ -164,6 +165,24 @@ def write_case_result(
             encoding="utf-8",
         )
         attachments.append({"name": "RAGAS Scores", "source": scores_attachment_file, "type": "application/json"})
+
+    if metric_reasons:
+        # The judge LLM's own per-chunk/per-statement reasoning for why each metric
+        # scored the way it did (see ragas_metrics._METRIC_REASON_EXTRACTORS) -- kept
+        # as its own attachment rather than a parameter for the same reason Contexts
+        # is excluded from parameters above: this can be long (up to MAX_CONTEXTS
+        # chunks' worth for context_precision), which would clutter Allure's
+        # Suites/Behaviors list-view preview.
+        reasons_attachment_file = f"{uuid.uuid4()}-attachment.json"
+        (results_dir / reasons_attachment_file).write_text(
+            json.dumps(metric_reasons, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        attachments.append({
+            "name": "RAGAS Metric Reasons",
+            "source": reasons_attachment_file,
+            "type": "application/json",
+        })
 
     parameters = [
         {"name": "Query", "value": query},

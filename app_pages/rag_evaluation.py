@@ -41,8 +41,11 @@ from ragas_metrics import (
     configured_metric_keys as _configured_metric_keys,
     evaluate_single_row,
     diagnose_row,
+    build_metric_tooltip,
     TooManyContextsError,
     _parse_token_usage,
+    _build_metric_with_recorder,
+    _METRIC_REASON_EXTRACTORS,
 )
 import allure_utils
 
@@ -259,7 +262,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                 job.set_row_status(i, f"Retrying {labels} (attempt {attempt}/{max_attempts})...")
 
         try:
-            scores, duration_s, errors, token_usage = evaluate_single_row(
+            scores, duration_s, errors, token_usage, metric_reasons = evaluate_single_row(
                 llm, embeddings, metric_cols, query_i, answer_i, contexts_i, ground_truth_i,
                 on_attempt=_on_attempt,
             )
@@ -279,6 +282,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                     "start_ms": start_ms,
                     "stop_ms": now_ms,
                     "total_tokens": 0,
+                    "metric_reasons": {},
                     **{k: float("nan") for k in metric_cols},
                 },
             )
@@ -309,6 +313,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                 "total_tokens": token_usage["total_tokens"],
                 "input_tokens": token_usage["input_tokens"],
                 "output_tokens": token_usage["output_tokens"],
+                "metric_reasons": metric_reasons,
             }
         )
         job.set_row_result(i, row_dict)
@@ -340,6 +345,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
                     "duration_s": 0.0,
                     "start_ms": job.row_start_ms[i],
                     "stop_ms": now_ms,
+                    "metric_reasons": {},
                     **{k: float("nan") for k in metric_cols},
                 },
             )
@@ -874,9 +880,13 @@ if run_single:
                     }
                 )
 
+                built = [_build_metric_with_recorder(k, llm, embeddings) for k in metric_keys]
+                metrics_list = [m for m, _ in built]
+                recorders = dict(zip(metric_keys, (r for _, r in built)))
+
                 result = evaluate(
                     dataset=dataset,
-                    metrics=[METRIC_BUILDERS[k](llm, embeddings) for k in metric_keys],
+                    metrics=metrics_list,
                     run_config=EVAL_RUN_CONFIG,
                     raise_exceptions=True,
                     token_usage_parser=_parse_token_usage,
@@ -894,6 +904,12 @@ if run_single:
                     "output_tokens": out_tok,
                     "total_tokens": in_tok + out_tok,
                 }
+                metric_reasons = {}
+                for k, recorder in recorders.items():
+                    try:
+                        metric_reasons[k] = _METRIC_REASON_EXTRACTORS[k](recorder.calls)
+                    except Exception:
+                        pass  # best-effort only -- never let reason-extraction break scoring
             break
         except Exception as exc:
             last_exc = exc
@@ -935,6 +951,7 @@ if run_single:
             stop_ms=stop_ms,
             token_usage=token_usage,
             diagnosis=diagnosis,
+            metric_reasons=metric_reasons,
         )
     except Exception as exc:
         # A report-writing failure is a side effect, not a scoring failure -- don't
@@ -957,11 +974,15 @@ if run_single:
         f"output: {token_usage['output_tokens']:,}) -- judge-LLM calls only, embeddings not included"
     )
     cols = st.columns(len(metric_values) + 1)
-    for col, name, value in zip(cols, metric_values.keys(), metric_values.values()):
+    # Hover ("ⓘ") tooltip per metric explains *why* it's low, using the judge LLM's
+    # own per-chunk/per-statement reasoning (see ragas_metrics.build_metric_tooltip)
+    # -- only appears when the score is actually low.
+    for col, k, (name, value) in zip(cols, metric_keys, metric_values.items()):
         if math.isnan(value):
             col.metric(name, "—")
         else:
-            col.metric(name, f"{value:.4f}", _score_label(value))
+            tooltip = build_metric_tooltip(k, value, metric_reasons.get(k))
+            col.metric(name, f"{value:.4f}", _score_label(value), help=tooltip)
     cols[-1].metric("Time Taken", f"{duration_s:.2f}s")
 
     focus_label = " + ".join(diagnosis["focus_areas"]) if diagnosis["focus_areas"] else "Healthy"
@@ -1172,6 +1193,7 @@ if active_job is not None:
                                 "total_tokens": int(row.get("total_tokens", 0)),
                             },
                             diagnosis=diagnose_row({k: row[k] for k in metric_cols}),
+                            metric_reasons=row.get("metric_reasons") or {},
                         )
                     except Exception as exc:
                         # A report-writing failure is a side effect, not a scoring
@@ -1281,6 +1303,23 @@ if active_job is not None:
                             f"Started: {_fmt_ms(row.get('start_ms'))}  |  "
                             f"Completed: {_fmt_ms(row.get('stop_ms'))}"
                         )
+                        # Hover ("ⓘ") tooltip per metric explains *why* it's low, using
+                        # the judge LLM's own per-chunk/per-statement reasoning (see
+                        # ragas_metrics.build_metric_tooltip) -- only appears when the
+                        # score is actually low; nothing to add for a healthy score.
+                        row_metric_reasons = row.get("metric_reasons") or {}
+                        metric_score_cols = st.columns(len(metric_cols))
+                        for col_widget, metric_key in zip(metric_score_cols, metric_cols):
+                            v = row[metric_key]
+                            if isinstance(v, float) and math.isnan(v):
+                                col_widget.metric(metric_labels[metric_key], "—")
+                            else:
+                                tooltip = build_metric_tooltip(
+                                    metric_key, v, row_metric_reasons.get(metric_key)
+                                )
+                                col_widget.metric(
+                                    metric_labels[metric_key], f"{v:.4f}", _score_label(v), help=tooltip
+                                )
                         row_diagnosis = diagnose_row({k: row[k] for k in metric_cols})
                         focus_label = (
                             " + ".join(row_diagnosis["focus_areas"]) if row_diagnosis["focus_areas"] else "Healthy"

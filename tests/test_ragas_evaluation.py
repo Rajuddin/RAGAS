@@ -75,7 +75,7 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
             )
 
             try:
-                scores, duration_s, errors, token_usage = evaluate_single_row(
+                scores, duration_s, errors, token_usage, metric_reasons = evaluate_single_row(
                     llm, embeddings, metric_keys, query, answer, contexts, ground_truth
                 )
             except TooManyContextsError as exc:
@@ -112,6 +112,15 @@ def test_evaluate_all_metrics(rag_responses, app_config, llm, embeddings):
                 name=f"[{test_id}] RAGAS Scores",
                 attachment_type=allure.attachment_type.JSON,
             )
+            if metric_reasons:
+                # The judge LLM's own per-chunk/per-statement reasoning for why each
+                # metric scored the way it did -- kept as its own attachment since it
+                # can be long (up to MAX_CONTEXTS chunks' worth for context_precision).
+                allure.attach(
+                    json.dumps(metric_reasons, indent=2, ensure_ascii=False),
+                    name=f"[{test_id}] RAGAS Metric Reasons",
+                    attachment_type=allure.attachment_type.JSON,
+                )
 
             allure.dynamic.parameter("Query", query)
             allure.dynamic.parameter("Ground Truth", ground_truth)
