@@ -71,6 +71,22 @@ def _score_label(score: float) -> str:
         return "POOR"
 
 
+def _score_delta_style(score: float) -> tuple:
+    """(delta_color, delta_arrow) for st.metric() so the color/arrow actually match
+    what EXCELLENT/GOOD/MODERATE/POOR say. st.metric only auto-colors green+up vs
+    red+down based on whether the delta *text* starts with "-" -- none of these
+    labels do, so every score rendered green with an up arrow regardless of which
+    label it carried. This makes the four bands read as a traffic light: green/up
+    for EXCELLENT+GOOD, orange/no-arrow for MODERATE (a caution, not a trend), red/
+    down for POOR."""
+    label = _score_label(score)
+    if label in ("EXCELLENT", "GOOD"):
+        return "green", "up"
+    if label == "MODERATE":
+        return "orange", "off"
+    return "red", "down"
+
+
 def _has_rag_api(cfg) -> bool:
     endpoint = cfg.rag_api.endpoint or ""
     return bool(endpoint) and "your-rag-api" not in endpoint
@@ -982,7 +998,11 @@ if run_single:
             col.metric(name, "—")
         else:
             tooltip = build_metric_tooltip(k, value, metric_reasons.get(k))
-            col.metric(name, f"{value:.4f}", _score_label(value), help=tooltip)
+            delta_color, delta_arrow = _score_delta_style(value)
+            col.metric(
+                name, f"{value:.4f}", _score_label(value), help=tooltip,
+                delta_color=delta_color, delta_arrow=delta_arrow,
+            )
     cols[-1].metric("Time Taken", f"{duration_s:.2f}s")
 
     focus_label = " + ".join(diagnosis["focus_areas"]) if diagnosis["focus_areas"] else "Healthy"
@@ -1229,7 +1249,11 @@ if active_job is not None:
                 if math.isnan(avg_value):
                     col_widget.metric(metric_labels[metric_key], "—")
                 else:
-                    col_widget.metric(metric_labels[metric_key], f"{avg_value:.4f}", _score_label(avg_value))
+                    delta_color, delta_arrow = _score_delta_style(avg_value)
+                    col_widget.metric(
+                        metric_labels[metric_key], f"{avg_value:.4f}", _score_label(avg_value),
+                        delta_color=delta_color, delta_arrow=delta_arrow,
+                    )
 
             st.caption(
                 f"Total evaluation time: {df['duration_s'].sum():.2f}s "
@@ -1317,8 +1341,10 @@ if active_job is not None:
                                 tooltip = build_metric_tooltip(
                                     metric_key, v, row_metric_reasons.get(metric_key)
                                 )
+                                delta_color, delta_arrow = _score_delta_style(v)
                                 col_widget.metric(
-                                    metric_labels[metric_key], f"{v:.4f}", _score_label(v), help=tooltip
+                                    metric_labels[metric_key], f"{v:.4f}", _score_label(v), help=tooltip,
+                                    delta_color=delta_color, delta_arrow=delta_arrow,
                                 )
                         row_diagnosis = diagnose_row({k: row[k] for k in metric_cols})
                         focus_label = (
