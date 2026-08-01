@@ -87,6 +87,47 @@ def _score_delta_style(score: float) -> tuple:
     return "red", "down"
 
 
+def _render_field_body(value) -> None:
+    """The raw list/text rendering shared by every field variant below, with no
+    header of its own -- callers supply the header (a markdown heading, an
+    expander label, or a popover label)."""
+    if isinstance(value, list):
+        if not value:
+            st.caption("(none)")
+        for i, v in enumerate(value, 1):
+            st.text(f"{i}. {v}" if len(v) <= 500 else f"{i}. {v[:500]}…")
+    else:
+        st.write(value if value else "*(empty)*")
+
+
+def _field_button_label(icon: str, label: str, value) -> str:
+    if isinstance(value, list):
+        return f"{icon} {label} ({len(value)} chunk{'s' if len(value) != 1 else ''})"
+    return f"{icon} {label}"
+
+
+def _render_labeled_field(icon: str, label: str, value) -> None:
+    """Render one query/ground-truth/answer/contexts field with a small header
+    (icon + heading-level text) instead of a plain st.write("Label:", value) line.
+    Headings render larger/bolder/theme-colored, distinct from body text -- a
+    plain st.write label is the same size and color as its own content, which is
+    what made adjacent fields (query, ground truth, answer, contexts) blend
+    together into one wall of same-looking text with no visual boundary."""
+    st.markdown(f"##### {icon} {label}")
+    _render_field_body(value)
+
+
+def _render_expandable_field(icon: str, label: str, value) -> None:
+    """Same content as _render_labeled_field, collapsed by default behind a real
+    st.expander -- gives an actual clickable arrow/chevron to open and close it,
+    independently of any other field's expander next to it. Callers must not
+    already be inside another st.expander (Streamlit disallows nesting an
+    expander inside another expander) -- render this inside a plain
+    st.container instead."""
+    with st.expander(_field_button_label(icon, label, value), expanded=False):
+        _render_field_body(value)
+
+
 def _has_rag_api(cfg) -> bool:
     endpoint = cfg.rag_api.endpoint or ""
     return bool(endpoint) and "your-rag-api" not in endpoint
@@ -228,15 +269,19 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
         query_i = item["query"]
         ground_truth_i = item["ground_truth"]
 
-        # Built fresh per row rather than once and shared across every concurrently
-        # running row: reusing one async HTTP client across the many separate event
-        # loops that create/destroy across concurrent rows was a contributor to the
-        # Windows asyncio.run()/loop.close() hang (see ROW_HARD_TIMEOUT_S below) --
-        # ragas_metrics's WindowsSelectorEventLoopPolicy switch is what actually
-        # eliminates that hang at the source, this just removes one more source of
-        # cross-row contention as defense in depth.
-        llm = build_langchain_llm(llm_cfg)
-        embeddings = build_langchain_embeddings(llm_cfg)
+        # Built fresh per row (and, via rebuild_clients below, fresh per retry
+        # attempt within a row) rather than shared across concurrently running rows
+        # or reused across a row's own attempts: reusing one async HTTP client
+        # across the many separate event loops that asyncio.run() creates/destroys
+        # -- once per evaluate_single_row attempt -- was a contributor to the
+        # Windows asyncio.run()/loop.close() hang (see ROW_HARD_TIMEOUT_S below).
+        # ragas_metrics's WindowsSelectorEventLoopPolicy switch eliminates that hang
+        # at the source; building genuinely fresh clients here too is defense in
+        # depth against the same trigger recurring on a single row's own retries.
+        def _rebuild_clients():
+            return build_langchain_llm(llm_cfg), build_langchain_embeddings(llm_cfg)
+
+        llm, embeddings = _rebuild_clients()
 
         start_ms = int(time.time() * 1000)
         job.set_row_start(i, start_ms)
@@ -281,6 +326,7 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
             scores, duration_s, errors, token_usage, metric_reasons = evaluate_single_row(
                 llm, embeddings, metric_cols, query_i, answer_i, contexts_i, ground_truth_i,
                 on_attempt=_on_attempt,
+                rebuild_clients=_rebuild_clients,
             )
         except TooManyContextsError as exc:
             job.set_row_status(i, f"Scoring failed: {exc}")
@@ -862,10 +908,8 @@ if run_single:
                 st.error(f"RAG API call failed: {exc}")
                 st.stop()
         st.subheader("RAG API Response")
-        st.write("**Generated Answer:**", answer)
-        st.write("**Contexts:**")
-        for i, c in enumerate(contexts, 1):
-            st.text(f"{i}. {c}")
+        _render_expandable_field("🤖", "Generated Answer", answer)
+        _render_expandable_field("📄", "Contexts", contexts)
     else:
         answer = (manual_answer or "").strip()
         contexts = [line.strip() for line in (manual_contexts_raw or "").splitlines() if line.strip()]
@@ -913,7 +957,11 @@ if run_single:
                     token_usages = usage if isinstance(usage, list) else [usage]
                     in_tok = sum(u.input_tokens for u in token_usages)
                     out_tok = sum(u.output_tokens for u in token_usages)
-                except ValueError:
+                except (ValueError, IndexError):
+                    # ValueError: no cost_cb at all. IndexError: cost_cb exists but
+                    # recorded zero calls this attempt -- ragas's total_tokens()
+                    # indexes usage_data[0] unconditionally, doesn't guard against
+                    # it being empty. Best-effort telemetry either way.
                     in_tok = out_tok = 0
                 token_usage = {
                     "input_tokens": in_tok,
@@ -1119,15 +1167,17 @@ if active_job is not None:
                 icon = "❌"
             else:
                 icon = "🔄"
-            # st.expander (unlike st.status) accepts a `key`, so Streamlit persists
-            # whether the user manually expanded/collapsed it across reruns — this
-            # page reruns itself every ~1.5s while a batch is running (see the
-            # st.rerun() below) purely to poll for progress, and st.status has no
-            # way to remember a manual expand across that: every poll rebuilt it
-            # from scratch with expanded=False, snapping it shut again.
-            with st.expander(f"{icon} {test_id} — {stage}", key=f"batch_row_expander_{i}"):
+            # A bordered container, not st.expander: Ground Truth/Generated
+            # Answer/Contexts below each need their own real st.expander for an
+            # actual arrow toggle (matching the final per-test-case result view),
+            # and Streamlit doesn't allow nesting an expander inside another
+            # expander. Each row is always visible while the batch runs; only the
+            # three fields inside collapse/expand, independently of each other.
+            with st.container(border=True):
+                st.markdown(f"**{icon} {test_id}** — {stage}")
                 item = active_job.items[i]
                 st.caption(item.get("query", ""))
+                _render_expandable_field("✅", "Ground Truth", item.get("ground_truth", ""))
                 row_record = snap["row_records"][i]
                 st.caption(
                     f"Started: {_fmt_ms(snap['row_start_ms'][i])}"
@@ -1136,10 +1186,8 @@ if active_job is not None:
                 answer = snap["row_answer"][i]
                 contexts = snap["row_contexts"][i]
                 if answer is not None:
-                    st.write("**Generated Answer:**", answer)
-                    st.write("**Contexts:**")
-                    for c in contexts or []:
-                        st.text(c if len(c) <= 500 else c[:500] + "…")
+                    _render_expandable_field("🤖", "Generated Answer", answer)
+                    _render_expandable_field("📄", "Contexts", contexts or [])
                 scores = snap["row_scores"][i]
                 if scores is not None:
                     for k in active_job.metric_cols:
@@ -1310,19 +1358,21 @@ if active_job is not None:
             display_df["Duration (s)"] = display_df["Duration (s)"].round(2)
             st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-            # A checkbox, not st.expander, controls the outer show/hide here: each
-            # test case below is its own st.expander (so it can be opened/closed
-            # independently, and — via `key` — remembers that across reruns), and
+            # A checkbox controls the outer show/hide here, and each test case
+            # renders in a bordered container (not an st.expander) rather than its
+            # own collapsible row: Ground Truth/Generated Answer/Contexts below
+            # need a real st.expander each for an actual arrow/chevron toggle, and
             # Streamlit doesn't allow nesting an expander inside another expander.
             show_full_details = st.checkbox("Show full details per test case (query, ground truth, answer, contexts)")
             if show_full_details:
                 for _, row in df.iterrows():
                     query_preview = row["user_input"] if len(row["user_input"]) <= 80 else row["user_input"][:80] + "…"
-                    with st.expander(f"{row['test_id']} — {query_preview}", key=f"batch_final_expander_{row['test_id']}"):
-                        st.write("Query:", row["user_input"])
-                        st.write("Ground Truth:", row.get("reference", ""))
-                        st.write("Generated Answer:", row.get("response", ""))
-                        st.write("Contexts:", row.get("retrieved_contexts", []))
+                    with st.container(border=True):
+                        st.markdown(f"**{row['test_id']}** — {query_preview}")
+                        _render_labeled_field("🔎", "Query", row["user_input"])
+                        _render_expandable_field("✅", "Ground Truth", row.get("reference", ""))
+                        _render_expandable_field("🤖", "Generated Answer", row.get("response", ""))
+                        _render_expandable_field("📄", "Contexts", row.get("retrieved_contexts", []))
                         st.caption(
                             f"Started: {_fmt_ms(row.get('start_ms'))}  |  "
                             f"Completed: {_fmt_ms(row.get('stop_ms'))}"

@@ -611,6 +611,7 @@ def evaluate_single_row(
     run_config: RunConfig = None,
     max_attempts: int = None,
     on_attempt=None,
+    rebuild_clients=None,
 ) -> tuple:
     """Run ragas.evaluate() for one {question, answer, contexts, ground_truth} row,
     retrying up to max_attempts times if any requested metric comes back NaN.
@@ -625,6 +626,20 @@ def evaluate_single_row(
     on_attempt, if given, is called as on_attempt(attempt, max_attempts, retry_keys)
     before each attempt (attempt starts at 1; retry_keys is the list of metric keys
     being (re)computed this attempt) — lets callers surface "retrying X..." progress.
+
+    rebuild_clients, if given, is a zero-arg callable returning a fresh (llm,
+    embeddings) pair, called before *every* attempt (including the first) so each
+    attempt gets its own never-before-used LLM/embeddings client -- replacing the
+    initial `llm`/`embeddings` arguments for that attempt only, not building on top
+    of them. This matters on Windows: ragas.evaluate() calls asyncio.run() fresh on
+    every attempt (a new event loop each time), and reusing one async HTTP client
+    across those separate loops is what triggers a ProactorEventLoop.close() hang
+    (see WindowsSelectorEventLoopPolicy above, and ROW_HARD_TIMEOUT_S in
+    app_pages/rag_evaluation.py) -- building fresh per row alone still leaves this
+    exact reuse *within* a row, across its own retry attempts. Omit this if the
+    caller doesn't have a cheap way to rebuild clients (e.g. session-scoped
+    fixtures shared across many rows, like tests/test_ragas_evaluation.py) -- the
+    passed-in `llm`/`embeddings` are then reused across attempts as before.
 
     Raises TooManyContextsError if len(contexts) > MAX_CONTEXTS, before making any
     LLM calls — see the comment above MAX_CONTEXTS for why that limit exists.
@@ -682,6 +697,8 @@ def evaluate_single_row(
     output_tokens = 0
     remaining_keys = list(metric_keys)
     for attempt in range(1, max_attempts + 1):
+        if rebuild_clients is not None:
+            llm, embeddings = rebuild_clients()
         if on_attempt is not None:
             on_attempt(attempt, max_attempts, remaining_keys)
         built = [_build_metric_with_recorder(k, llm, embeddings) for k in remaining_keys]
@@ -713,8 +730,14 @@ def evaluate_single_row(
             for u in usage if isinstance(usage, list) else [usage]:
                 input_tokens += u.input_tokens
                 output_tokens += u.output_tokens
-        except ValueError:
-            pass  # no LLM call completed this attempt (e.g. every metric errored)
+        except (ValueError, IndexError):
+            # ValueError: no cost_cb at all (token_usage_parser wasn't honored).
+            # IndexError: cost_cb exists but recorded zero calls this attempt (e.g.
+            # every metric errored before its LLM call returned) -- ragas's own
+            # total_tokens() indexes usage_data[0] unconditionally and doesn't
+            # guard against it being empty. Either way this is best-effort token
+            # accounting; it must never take down the row's actual scoring.
+            pass
 
         for k, recorder in recorders.items():
             try:
