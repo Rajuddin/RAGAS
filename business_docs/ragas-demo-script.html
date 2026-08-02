@@ -1,0 +1,375 @@
+<title>Demo Script — Catching the Answer That Sounds Right But Isn't</title>
+<style>
+  :root{
+    --bg:#F1F3EF;
+    --panel:#FFFFFF;
+    --ink:#12181A;
+    --ink-soft:#4B5754;
+    --ink-faint:#8A9490;
+    --line:#D3D9D2;
+    --accent:#1F7A68;
+    --accent-soft:#DCEBE6;
+    --you:#1F7A68;
+    --client:#8B5E2E;
+    --sc-excellent:#1F7A68;
+    --sc-good:#3E7C93;
+    --sc-moderate:#B07A1E;
+    --sc-poor:#A9482F;
+    --code-bg:#EBEEEA;
+
+    --font-display:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+    --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,'SF Mono','Cascadia Code',Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#10151A; --panel:#161E22; --ink:#ECF1EE; --ink-soft:#9AACA6; --ink-faint:#657270; --line:#283235;
+      --accent:#4FC3A8; --accent-soft:#1B3833;
+      --you:#4FC3A8; --client:#D7A667;
+      --sc-excellent:#4FC3A8; --sc-good:#78B7DA; --sc-moderate:#E4B564; --sc-poor:#E48267;
+      --code-bg:#0F1417;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#10151A; --panel:#161E22; --ink:#ECF1EE; --ink-soft:#9AACA6; --ink-faint:#657270; --line:#283235;
+    --accent:#4FC3A8; --accent-soft:#1B3833;
+    --you:#4FC3A8; --client:#D7A667;
+    --sc-excellent:#4FC3A8; --sc-good:#78B7DA; --sc-moderate:#E4B564; --sc-poor:#E48267;
+    --code-bg:#0F1417;
+  }
+  :root[data-theme="light"]{
+    --bg:#F1F3EF; --panel:#FFFFFF; --ink:#12181A; --ink-soft:#4B5754; --ink-faint:#8A9490; --line:#D3D9D2;
+    --accent:#1F7A68; --accent-soft:#DCEBE6;
+    --you:#1F7A68; --client:#8B5E2E;
+    --sc-excellent:#1F7A68; --sc-good:#3E7C93; --sc-moderate:#B07A1E; --sc-poor:#A9482F;
+    --code-bg:#EBEEEA;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:16.5px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .page{max-width:700px;margin:0 auto;padding:3.5rem 1.5rem 5rem;}
+
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:.72rem;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 .9rem;
+  }
+  h1{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:clamp(1.6rem, 1.3rem + 1.4vw, 2.15rem);
+    line-height:1.15;
+    letter-spacing:-.01em;
+    margin:0 0 1rem;
+    text-wrap:balance;
+  }
+  .cast{
+    font-size:.94rem;
+    color:var(--ink-soft);
+    margin:0 0 1.1rem;
+  }
+  .cast b{color:var(--ink);}
+  .prep{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:1.1rem 1.3rem;
+    font-size:.88rem;
+    color:var(--ink-soft);
+    margin-top:1.2rem;
+  }
+  .prep .tag{
+    font-family:var(--font-mono);
+    font-size:.68rem;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--accent);
+    display:block;
+    margin-bottom:.5rem;
+  }
+  .prep ul{margin:0;padding-left:1.1rem;}
+  .prep li{margin-bottom:.35rem;}
+  .prep li:last-child{margin-bottom:0;}
+  .runtime{
+    font-family:var(--font-mono);
+    font-size:.78rem;
+    color:var(--ink-faint);
+    margin-top:1rem;
+  }
+
+  .scene{
+    margin-top:3rem;
+    padding-top:2.2rem;
+    border-top:1px solid var(--line);
+  }
+  .scene-num{
+    font-family:var(--font-mono);
+    font-size:.72rem;
+    letter-spacing:.1em;
+    color:var(--accent);
+    text-transform:uppercase;
+  }
+  .scene h2{
+    font-family:var(--font-display);
+    font-weight:600;
+    font-size:1.35rem;
+    margin:.35rem 0 1rem;
+    letter-spacing:-.005em;
+  }
+  .dir{
+    font-style:italic;
+    color:var(--ink-faint);
+    font-size:.9rem;
+    margin:.9rem 0;
+  }
+  .line{
+    display:grid;
+    grid-template-columns:5.2rem 1fr;
+    gap:.9rem;
+    margin:.9rem 0;
+    align-items:baseline;
+  }
+  .who{
+    font-family:var(--font-mono);
+    font-size:.72rem;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding-top:.15rem;
+  }
+  .line.you .who{color:var(--you);}
+  .line.client .who{color:var(--client);}
+  .line p{margin:0;}
+  .quote{color:var(--ink);}
+  .quote em{color:var(--ink-soft);font-style:italic;}
+
+  table.scores{
+    width:100%;
+    border-collapse:collapse;
+    margin:1.1rem 0;
+    font-size:.9rem;
+  }
+  table.scores th{
+    text-align:left;
+    font-family:var(--font-mono);
+    font-size:.68rem;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    font-weight:600;
+    padding:.5rem .6rem;
+    border-bottom:1px solid var(--line);
+  }
+  table.scores td{
+    padding:.55rem .6rem;
+    border-bottom:1px solid var(--line);
+    font-variant-numeric:tabular-nums;
+  }
+  table.scores td.val{font-family:var(--font-mono);}
+  table.scores tr:last-child td{border-bottom:none;}
+  .band{
+    font-family:var(--font-mono);
+    font-size:.72rem;
+    letter-spacing:.04em;
+    padding:.18rem .5rem;
+    border-radius:999px;
+    display:inline-flex;
+    align-items:center;
+    gap:.4rem;
+  }
+  .band::before{content:"";width:.45rem;height:.45rem;border-radius:50%;background:currentColor;}
+  .band.excellent{color:var(--sc-excellent);background:color-mix(in srgb, var(--sc-excellent) 14%, transparent);}
+  .band.good{color:var(--sc-good);background:color-mix(in srgb, var(--sc-good) 14%, transparent);}
+  .band.moderate{color:var(--sc-moderate);background:color-mix(in srgb, var(--sc-moderate) 16%, transparent);}
+  .band.poor{color:var(--sc-poor);background:color-mix(in srgb, var(--sc-poor) 14%, transparent);}
+
+  blockquote{
+    margin:1rem 0 0;
+    padding:.9rem 1.1rem;
+    background:var(--code-bg);
+    border-radius:8px;
+    font-size:.85rem;
+    color:var(--ink-soft);
+  }
+  blockquote p{margin:0;}
+  blockquote strong{color:var(--ink);}
+
+  .qa{
+    margin-top:.6rem;
+  }
+  .qa .q{font-weight:700;font-size:.94rem;margin:1rem 0 .3rem;}
+  .qa .a{font-size:.92rem;color:var(--ink-soft);margin:0;}
+
+  footer{
+    margin-top:3.5rem;
+    padding-top:2rem;
+    border-top:1px solid var(--line);
+    font-size:.85rem;
+    color:var(--ink-faint);
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:.5rem;
+  }
+  footer a{color:var(--accent);text-decoration:none;}
+  footer a:hover{text-decoration:underline;}
+
+  @media (max-width:480px){
+    .line{grid-template-columns:1fr;gap:.15rem;}
+  }
+</style>
+
+<div class="page">
+
+  <p class="eyebrow">Demo Script</p>
+  <h1>Catching the answer that sounds right but isn't.</h1>
+  <p class="cast"><b>You</b> (presenter) &middot; <b>Maya Chen</b>, VP of Customer Experience at <b>Northwind Outfitters</b> — fictional client, swap in the real name before you present.</p>
+
+  <div class="prep">
+    <span class="tag">Before the call</span>
+    <ul>
+      <li><code>config.yaml</code> already has credentials saved — never type a key on screen.</li>
+      <li>RAG API pointed at the staging support-bot endpoint (or use manual mode — see the aside after Scene 4).</li>
+      <li><code>northwind_tickets.json</code> ready in <code>test_data/</code> — 24 real, anonymized support questions with correct answers.</li>
+      <li><code>allure-results/</code> cleared so the report you generate live is clean.</li>
+    </ul>
+  </div>
+  <p class="runtime">Runtime: ~12 minutes</p>
+
+  <div class="scene">
+    <span class="scene-num">Scene 1</span>
+    <h2>The problem, in Maya's own words</h2>
+    <p class="dir">Screen: nothing yet — just talking.</p>
+    <div class="line you"><span class="who">You</span><p class="quote">Before I open anything — you told me Ari's about to launch to all customers, but the team's still doing QA by hand. Walk me through that.</p></div>
+    <div class="line client"><span class="who">Maya</span><p class="quote">Basically someone asks it twenty or thirty questions, reads the answers, says "yeah, that looks right." Every release.</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">How confident are you that "looks right" catches everything?</p></div>
+    <div class="line client"><span class="who">Maya</span><p class="quote"><em>(pause)</em> Honestly? Not very. We've shipped subtly wrong answers before.</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">That's the gap this closes. Not a replacement for your team's judgment — a way to make "looks right" objective, on every question, every release. Let me show you on your own policy docs.</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 2</span>
+    <h2>The dashboard</h2>
+    <p class="dir">Open the app. The Dashboard loads.</p>
+    <div class="line you"><span class="who">You</span><p class="quote">One card per tool. RAG Evaluation is live today; Query Generator's on the roadmap — I'll come back to it, it solves your next problem.</p></div>
+    <p class="dir">Click "Open →".</p>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 3</span>
+    <h2>The setup nobody thinks about twice</h2>
+    <div class="line you"><span class="who">You</span><p class="quote">Left side is setup. Provider, key, deployment — already saved, a one-time thing. Metrics list here has all four switched on: Relevancy, Faithfulness, Precision, Recall. I'll explain each as we hit it.</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 4</span>
+    <h2>The clean win</h2>
+    <p class="dir">Evaluation Mode: Single Case.</p>
+    <blockquote><p><strong>Query:</strong> "What's your return window for a standard unopened item?"<br><strong>Ground Truth:</strong> "Standard, unused items can be returned within 30 days of delivery for a full refund, provided they're in original packaging."</p></blockquote>
+    <p class="dir">Click "Run Evaluation." Ari's answer: "You can return a standard, unused item within 30 days of delivery for a full refund, as long as it's in its original packaging."</p>
+    <table class="scores">
+      <tr><th>Metric</th><th>Score</th><th></th></tr>
+      <tr><td>Response Relevancy</td><td class="val">0.96</td><td><span class="band excellent">EXCELLENT</span></td></tr>
+      <tr><td>Faithfulness</td><td class="val">0.94</td><td><span class="band excellent">EXCELLENT</span></td></tr>
+      <tr><td>Context Precision</td><td class="val">0.91</td><td><span class="band excellent">EXCELLENT</span></td></tr>
+      <tr><td>Context Recall</td><td class="val">0.88</td><td><span class="band good">GOOD</span></td></tr>
+    </table>
+    <div class="line you"><span class="who">You</span><p class="quote">Green across the board. This is "looks right" and actually is right. Good — but not the interesting part.</p></div>
+    <blockquote><p><strong>No live RAG API for the demo?</strong> Uncheck "Fetch answer & contexts from RAG API" and paste Ari's answer and the policy paragraph in by hand — same scores, same story, you're just playing the API for thirty seconds.</p></blockquote>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 5</span>
+    <h2>The catch</h2>
+    <blockquote><p><strong>Query:</strong> "I bought a clearance jacket — can I return it within 30 days like everything else?"<br><strong>Ground Truth:</strong> "No — items marked Clearance are final sale and are not eligible for return or exchange."</p></blockquote>
+    <p class="dir">Click "Run Evaluation." Ari's answer: "Yes, clearance items can be returned within 30 days for a full refund, just like standard items."</p>
+    <div class="line client"><span class="who">Maya</span><p class="quote"><em>(reading)</em> ...That's just wrong. Confidently, completely wrong.</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">And it reads fine — confident, on-topic. Exactly what a tired reviewer skims past at 4pm on a Friday. Watch the scores.</p></div>
+    <table class="scores">
+      <tr><th>Metric</th><th>Score</th><th></th></tr>
+      <tr><td>Response Relevancy</td><td class="val">0.91</td><td><span class="band excellent">EXCELLENT</span></td></tr>
+      <tr><td>Faithfulness</td><td class="val">0.32</td><td><span class="band poor">POOR</span></td></tr>
+      <tr><td>Context Precision</td><td class="val">0.88</td><td><span class="band good">GOOD</span></td></tr>
+      <tr><td>Context Recall</td><td class="val">0.83</td><td><span class="band good">GOOD</span></td></tr>
+    </table>
+    <div class="line you"><span class="who">You</span><p class="quote">Relevancy's fine, retrieval's fine — the clearance paragraph was right there. Faithfulness cratered, because the answer directly contradicts the context it was given.</p></div>
+    <p class="dir">Scroll to "Suggested Focus: Augmentation + Generation."</p>
+    <div class="line you"><span class="who">You</span><p class="quote">Retrieval was healthy but the answer wasn't grounded in it — so it narrows this to two places: how the context got handed into the prompt, or how the model used it. Not "something's wrong somewhere."</p></div>
+    <p class="dir">Hover the Faithfulness tile — tooltip shows the judge model's own reasoning.</p>
+    <div class="line client"><span class="who">Maya</span><p class="quote">So it's not just a number, it's telling you why.</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">Every time. That's "the bot failed QA" versus "the bot failed QA, here's the sentence that proves it, here's the two places to check first."</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 6</span>
+    <h2>Scaling it up</h2>
+    <p class="dir">Switch to Batch (JSON file). Upload northwind_tickets.json — 24 real questions with correct answers.</p>
+    <div class="line client"><span class="who">Maya</span><p class="quote">How long would this take your team by hand?</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">The better part of an afternoon, done carefully. This runs unattended — kick it off before a release and walk away.</p></div>
+    <p class="dir">Progress bar climbs live. Batch finishes.</p>
+    <table class="scores">
+      <tr><th>Metric</th><th>Average</th><th></th></tr>
+      <tr><td>Response Relevancy</td><td class="val">0.93</td><td><span class="band excellent">EXCELLENT</span></td></tr>
+      <tr><td>Faithfulness</td><td class="val">0.81</td><td><span class="band good">GOOD</span></td></tr>
+      <tr><td>Context Precision</td><td class="val">0.88</td><td><span class="band good">GOOD</span></td></tr>
+      <tr><td>Context Recall</td><td class="val">0.79</td><td><span class="band good">GOOD</span></td></tr>
+    </table>
+    <div class="line you"><span class="who">You</span><p class="quote">Three of your 24 cases have the exact fingerprint we just saw live — Augmentation + Generation. Two more point at retrieval gaps instead. "Show full details" gives you every one, individually.</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 7</span>
+    <h2>The paper trail</h2>
+    <p class="dir">Sidebar: "Generate & Open Report," then "Open Allure Report ↗."</p>
+    <div class="line you"><span class="who">You</span><p class="quote">Every case we ran today — input, answer, contexts, all four scores, timestamped. Something you can hand to whoever signs off on a release, not a Slack screenshot that gets lost.</p></div>
+    <div class="line client"><span class="who">Maya</span><p class="quote">Does it keep history across releases, or just this run?</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">It accumulates — UI runs and CI runs land in the same place. You can watch Faithfulness trend over four releases, not just check it once.</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">Scene 8</span>
+    <h2>The close</h2>
+    <p class="dir">Back to the Dashboard. Point at "Query Generator."</p>
+    <div class="line you"><span class="who">You</span><p class="quote">Today, someone still writes those 24 questions by hand. This — on the roadmap — reads your own help center and generates the test set for you.</p></div>
+    <div class="line client"><span class="who">Maya</span><p class="quote">When's that ready?</p></div>
+    <div class="line you"><span class="who">You</span><p class="quote"><em>(your actual roadmap answer — don't overpromise a date you haven't committed to)</em></p></div>
+    <div class="line you"><span class="who">You</span><p class="quote">Everything you saw today is real and runs against your data right now. The question isn't whether this works — it's whether your team finds the clearance-jacket problem the way we just did, in twenty seconds, before launch, or the way you found the last one.</p></div>
+  </div>
+
+  <div class="scene">
+    <span class="scene-num">If Maya asks</span>
+    <h2>Quick answers, not scripted lines</h2>
+    <div class="qa">
+      <p class="q">"Does it work with another LLM, not just Azure?"</p>
+      <p class="a">Yes at the configuration layer — OpenAI and Azure AI Foundry are already built in, today's sidebar just has Azure switched on. Enabling a second option is a small change, not new development.</p>
+    </div>
+    <div class="qa">
+      <p class="q">"Can this run in our CI pipeline, not just this UI?"</p>
+      <p class="a">Yes — the same four metrics run from an automated pytest suite into the same report you just saw. UI for ad-hoc checks, pytest for "run on every merge."</p>
+    </div>
+    <div class="qa">
+      <p class="q">"What if our API doesn't return JSON in this shape?"</p>
+      <p class="a">Most common shapes auto-detect; a manual field-mapping panel (with dotted-path support for nested fields) covers the rest — a five-minute setup, not an integration project.</p>
+    </div>
+    <div class="qa">
+      <p class="q">"What does POOR vs. MODERATE actually mean?"</p>
+      <p class="a">A fixed scale, not a vibe: EXCELLENT ≥ 0.85, GOOD ≥ 0.70, MODERATE ≥ 0.50, POOR below — same four bands on every score, every run.</p>
+    </div>
+  </div>
+
+  <footer>
+    <span>RAG Evaluation Platform &mdash; Demo Script</span>
+    <a href="mailto:rajddin@gmail.com">rajddin@gmail.com</a>
+  </footer>
+
+</div>

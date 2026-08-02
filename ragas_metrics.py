@@ -37,8 +37,26 @@ from ragas.run_config import RunConfig
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# An LLM call is retried at most this many times before a row is treated as failed.
+# How many times evaluate_single_row redoes a whole metric (all of context_precision's
+# chunk calls included) if it's still missing after an attempt. Not the same knob as
+# LLM_CALL_MAX_RETRIES below -- see that constant's comment for why they're separate.
 MAX_RETRIES = 1
+
+# Passed as RunConfig.max_retries, this governs tenacity's stop_after_attempt() inside
+# ragas's own per-LLM-call retry (ragas.run_config.add_async_retry) -- the retry for a
+# single call (e.g. one context_precision chunk), not the whole-metric redo above.
+# tenacity's stop_after_attempt(n) counts *n* as the total attempts, not retries beyond
+# the first: stop_after_attempt(1) stops right after attempt 1, i.e. zero retries.
+# This constant used to just reuse MAX_RETRIES (=1), which silently meant every single
+# LLM call had NO retry at all -- a lone transient failure (e.g. an APIConnectionError
+# from a burst of concurrent batch rows briefly exceeding a connection limit somewhere
+# in the network path) failed that call immediately, with no chance to self-heal, and
+# forced the expensive whole-metric redo instead (all of context_precision's already-
+# succeeded chunk calls recomputed too, not just the one that failed). 2 gives each
+# call one real retry (with tenacity's wait_random_exponential backoff, capped by
+# max_wait below) at the point of failure, so a transient blip usually recovers without
+# ever reaching the outer retry.
+LLM_CALL_MAX_RETRIES = 2
 
 # context_precision issues one sequential LLM call per retrieved context chunk
 # (ragas.metrics._context_precision.LLMContextPrecisionWithReference._ascore loops
@@ -73,13 +91,17 @@ class TooManyContextsError(ValueError):
 # exceed 120s -- when it does, that one metric comes back as a clear TimeoutError
 # (surfaced via _JobErrorCapture, not a bare NaN) while the other three metrics for
 # that row are unaffected, since only still-missing metrics get retried (see
-# evaluate_single_row). Combined with MAX_RETRIES=1 (2 attempts), a row's scoring
-# is bounded at ~240s worst case, matching that requirement.
+# evaluate_single_row). Combined with MAX_RETRIES=1 (2 whole-metric attempts), a row's
+# scoring is still bounded at ~240s worst case: LLM_CALL_MAX_RETRIES's per-call retry
+# happens *inside* a single attempt's 120s timeout budget, not on top of it, so it
+# doesn't add a separate multiplier -- a call that needs its one retry just uses more
+# of that same 120s before either succeeding or (if it also fails) letting the 120s
+# timeout or the outer whole-metric retry take over.
 # max_workers=4 (not the default 16): each row only ever has 4 metric-level tasks in
 # flight at once (one per configured metric), so 16 workers just means up to 4x more
 # concurrent LLM calls hitting the deployment than are actually needed per row, adding
 # unnecessary peak load with no speed benefit — this caps it to what's actually used.
-EVAL_RUN_CONFIG = RunConfig(timeout=120, max_retries=MAX_RETRIES, max_wait=15, max_workers=4)
+EVAL_RUN_CONFIG = RunConfig(timeout=120, max_retries=LLM_CALL_MAX_RETRIES, max_wait=15, max_workers=4)
 
 # Every metric config.yaml's ragas.metrics list can name, and how to build/label each
 # one. context_precision/context_recall are the expensive ones (one sequential LLM
