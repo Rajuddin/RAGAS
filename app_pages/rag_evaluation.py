@@ -428,7 +428,10 @@ def _run_batch_job(job: "_BatchJob", items, use_api, rag_api_cfg, llm_cfg, concu
     # row that's genuinely still working, not hung (EVAL_RUN_CONFIG.timeout=120s x up
     # to 2 attempts = 240s of scoring, plus the RAG API call), so it fires only for a
     # real hang while still keeping the *outer* ceiling close to that requirement.
-    ROW_HARD_TIMEOUT_S = 5 * 60
+    # This is a single wait() over the whole batch (all rows share one deadline), so
+    # the budget scales with the number of test cases: 3min/case (10 cases -> 30min,
+    # 15 cases -> 45min) rather than a flat constant that starves larger batches.
+    ROW_HARD_TIMEOUT_S = 3 * 60 * len(test_ids)
 
     pool = ThreadPoolExecutor(max_workers=concurrency)
     try:
